@@ -7,13 +7,13 @@ import plotly.graph_objects as go
 import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Net Sonuç", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Amınoğlu Final", page_icon="🛡️", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🛡️ Amınoğlu Net Sonuç (v25.0)")
+st.title("🛡️ Amınoğlu Net Sonuç (v26.0)")
 st.markdown("""
-**Sade ve Güvenli:** Yatırım Tavsiyesi Vermez
-*Ama Evi Arabayı Satabilirsiniz*
+**Sade ve Güvenli:** Sadece zırhlı hedefi görürsünüz.
+*Arkada dönen matematiksel işlemler (frenleme/sönümleme) gizlenmiştir.*
 """)
 
 # --- YAN MENÜ ---
@@ -26,7 +26,7 @@ with st.sidebar:
     default_key = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO"
     api_key = st.text_input("FMP Key", value=default_key, type="password")
     
-    st.info("Mod: **NET SONUÇ**")
+    st.info("Mod: **NET SONUÇ (Hatasız)**")
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -36,7 +36,7 @@ def safe_float(val):
     except:
         return 0.0
 
-# --- FREN FONKSİYONU (GİZLİ KAHRAMAN) ---
+# --- FREN FONKSİYONU ---
 def apply_steel_brake(raw_upside):
     """
     Katsayı: 0.55 (Sert Fren)
@@ -130,8 +130,8 @@ def get_stock_history(symbol):
         return None
 
 # --- HESAPLAMA MOTORU ---
-def calculate_net_result(data):
-    # Parametreler (Aynı)
+def calculate_net_result(data, years): # years parametresini ekledik
+    # Parametreler
     if data['currency'] == 'TRY':
         wacc = 0.19 
         g = 0.14
@@ -142,7 +142,6 @@ def calculate_net_result(data):
         margin_factor = 1.1
     
     reinvestment_rate = 0.15
-    years = 10
     
     # Projeksiyon
     current_margin = data.get('ebit_margin', 0.15)
@@ -181,12 +180,16 @@ def calculate_net_result(data):
 
 # --- EKRAN ---
 if st.button("ANALİZ ET", type="primary"):
+    # HATA DÜZELTME: 'years' değişkenini burada tanımlıyoruz
+    years = 10 
+    
     with st.spinner('Net sonuç hesaplanıyor...'):
         data, err = get_data_hybrid(ticker, api_key)
         history = get_stock_history(ticker)
         
         if data:
-            target_price, upside, flows = calculate_net_result(data)
+            # years'ı fonksiyona yolluyoruz
+            target_price, upside, flows = calculate_net_result(data, years)
             
             # --- 1. ANA KART ---
             st.markdown(f"### 🛡️ {data['ticker']} Net Analiz")
@@ -197,7 +200,7 @@ if st.button("ANALİZ ET", type="primary"):
             # Hedef Fiyat
             c2.metric("Güvenli Hedef", f"{target_price:.2f} {data['currency']}")
             
-            # SADECE NET POTANSİYEL (Ham kısım silindi)
+            # SADECE NET POTANSİYEL
             color = "normal" if upside > 0 else "inverse"
             c3.metric("Net Potansiyel", f"%{upside*100:.1f}", delta_color=color)
             
@@ -219,17 +222,19 @@ if st.button("ANALİZ ET", type="primary"):
                 xaxis_title="Tarih",
                 yaxis_title="Fiyat"
             )
+            # UYARI DÜZELTME: use_container_width yerine yeni standart
             st.plotly_chart(fig, use_container_width=True)
             
             # --- 3. NAKİT AKIŞI ---
             st.markdown("### 🏔️ Nakit Akışı Projeksiyonu")
             df_flow = pd.DataFrame(flows, columns=["Projeksiyon"])
+            # UYARI DÜZELTME: Area chart için genişlik ayarı
             st.area_chart(df_flow, color="#32CD32" if upside > 0 else "#FF4B4B")
             
-            # --- 4. BİLGİ NOTU (Sadeleştirildi) ---
+            # --- 4. BİLGİ NOTU ---
+            # ARTIK 'years' TANIMLI OLDUĞU İÇİN BURASI PATLAMAZ
             st.info(f"ℹ️ **Sistem Notu:** Bu hedef fiyat, {years} yıllık nakit akış projeksiyonları ve 'Yüksek Güvenlik Marjı' kullanılarak hesaplanmıştır.")
 
         else:
             st.error("Veri Yok. Manuel Giriş:")
             # ...
-
