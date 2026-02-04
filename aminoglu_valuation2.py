@@ -2,28 +2,20 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Hibrit", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Amınoğlu Otopilot", page_icon="🤖", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🧠 Amınoğlu Hibrit Motor (Adaptive AI)")
-st.markdown("Şirketin karakterini (Startup vs Holding) otomatik algılayan akıllı sistem.")
+st.title("🤖 Amınoğlu Otopilot (v7.0)")
+st.markdown("Tam Otomatik Değerleme: Slider yok, ayar yok. Sadece sembol gir.")
 
-# --- YAN MENÜ ---
+# --- YAN MENÜ (SADECE SEMBOL) ---
 with st.sidebar:
-    st.header("⚙️ Parametreler")
-    ticker = st.text_input("Sembol", value="LMT").upper()
-    
-    st.subheader("Ayarlar")
-    forecast_years = st.slider("Tahmin Yılı", 5, 15, 10)
-    perpetual_growth = st.slider("Sonsuz Büyüme (g)", 1.5, 5.0, 2.5, 0.1) / 100
-    
-    wacc_manual = st.checkbox("WACC Manuel")
-    if wacc_manual:
-        wacc_input = st.slider("WACC (%)", 4.0, 20.0, 8.0, 0.5) / 100
-    else:
-        wacc_input = None
+    st.header("🔍 Analiz")
+    ticker = st.text_input("Hisse Sembolü", value="LMT").upper()
+    st.info("💡 Model, şirketin yaşına, betasına ve büyüme hızına bakarak tüm ayarları (Yıl, WACC, Büyüme, Yatırım Oranı) kendi belirler.")
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -33,7 +25,7 @@ def safe_float(val):
     except:
         return 0.0
 
-# --- VERİ ÇEKME ---
+# --- VERİ ÇEKME (Anti-Ban & Yedekli) ---
 @st.cache_data(ttl=3600)
 def get_data(symbol):
     stock = yf.Ticker(symbol)
@@ -44,44 +36,48 @@ def get_data(symbol):
         current_price = stock.fast_info.get('last_price', None)
         shares = stock.fast_info.get('shares', None)
         
-        if current_price is None:
+        if current_price is None or np.isnan(safe_float(current_price)):
             hist = stock.history(period="1d")
             if not hist.empty:
                 current_price = hist['Close'].iloc[-1]
             else:
-                return None, "Fiyat yok."
+                return None, "Fiyat verisi çekilemedi."
 
         bs = stock.balance_sheet
         is_stmt = stock.financials
         
         if bs.empty or is_stmt.empty:
-            return None, "Tablolar boş."
+            return None, "Finansal tablolar boş (Yahoo Engeli)."
 
-        # Temel Veriler
+        # --- TEMEL VERİLER ---
         data['ticker'] = symbol
         data['currency'] = stock.fast_info.get('currency', 'USD')
         data['current_price'] = safe_float(current_price)
         data['shares'] = safe_float(shares) / 1e6 
         if data['shares'] <= 0: data['shares'] = 1.0
 
-        # KARAKTER ANALİZİ İÇİN GEREKLİ VERİLER
-        # 1. Beta (Risk)
-        data['beta'] = stock.info.get('beta', 1.0)
-        
-        # 2. Büyüme Hızı (Revenue Growth)
-        # Yahoo'da bazen 'revenueGrowth' info içinde gelir
-        data['revenue_growth'] = stock.info.get('revenueGrowth', 0.05) 
-        
-        # 3. Şirket Yaşı (Tahmini) - firstTradeDate yoksa history uzunluğuna bak
-        first_trade = stock.info.get('firstTradeDateEpochUtc', None)
+        # --- PROFİL VERİLERİ ---
+        # 1. Risk (Beta)
+        try:
+            data['beta'] = stock.info.get('beta', 1.0)
+        except:
+            data['beta'] = 1.0
+            
+        # 2. Büyüme (Revenue Growth)
+        try:
+            data['revenue_growth'] = stock.info.get('revenueGrowth', 0.05)
+        except:
+            data['revenue_growth'] = 0.05
+
+        # 3. Yaş (Age)
+        first_trade = stock.info.get('firstTradeDateEpochUtc', None) if 'info' in dir(stock) else None
         if first_trade:
-            # Timestamp'i yıla çevir
-            import datetime
             ipo_year = datetime.datetime.fromtimestamp(first_trade).year
             data['age'] = datetime.datetime.now().year - ipo_year
         else:
-            data['age'] = 15 # Bilinmiyorsa orta yaşlı varsay
+            data['age'] = 15 # Bilinmiyorsa orta
 
+        # Tablolar
         data['total_debt'] = safe_float(bs.iloc[:, 0].get('Total Debt')) / 1e6
         data['cash'] = safe_float(bs.iloc[:, 0].get('Cash And Cash Equivalents')) / 1e6
         data['revenue'] = safe_float(is_stmt.iloc[:, 0].get('Total Revenue')) / 1e6
@@ -100,48 +96,56 @@ def get_data(symbol):
     except Exception as e:
         return None, str(e)
 
-# --- AKILLI HESAPLAMA MOTORU ---
-def calculate_dcf(data, years, g, manual_wacc):
-    # --- ADIM 1: ŞİRKET TİPİNİ BELİRLE (PROFILING) ---
-    # Bu kısım kodun beynidir.
-    
-    profile = "Standart"
-    reinvestment_rate = 0.30 # Varsayılan %30
-    
+# --- OTOPİLOT BEYNİ (TÜM KARARLARI BU ALIR) ---
+def autopilot_dcf(data):
+    # Girdiler
     age = data.get('age', 15)
     growth = data.get('revenue_growth', 0.05)
     beta = data.get('beta', 1.0)
     
-    # MANTIK AĞACI
-    if (growth > 0.15) or (age < 10):
-        # Hızlı Büyüyen / Startup
-        profile = "🚀 ROKET (Startup/Growth)"
-        reinvestment_rate = 0.60 # Büyümek için çok harcamalı (%60)
-        # Ama Startuplar daha hızlı büyür, g'yi artırabiliriz
-        used_growth_start = max(growth, 0.15) 
-        
-    elif (beta < 0.85) and (age > 15):
-        # Güvenli Liman / Temettücü (LMT, KO, JNJ)
+    # --- KARAR MEKANİZMASI ---
+    
+    # SENARYO 1: NAKİT İNEĞİ (LMT, KO, PEP)
+    # Yaşlı (>15), Düşük Risk (Beta < 0.9)
+    if (age > 15) and (beta < 0.9):
         profile = "🐄 NAKİT İNEĞİ (Cash Cow)"
-        reinvestment_rate = 0.10 # Az harcar, çok dağıtır (%10)
-        used_growth_start = 0.04 # Yavaş büyür
         
+        forecast_years = 7        # Uzun tahmine gerek yok, stabil.
+        perpetual_g = 0.025       # %2.5 (Enflasyon kadar büyür)
+        reinvestment_rate = 0.05  # %5 Yatırım (Çok az harcar, çok dağıtır)
+        target_wacc_cap = 0.075   # WACC'ı maksimum %7.5 yap (Değer artsın)
+        
+        # Beta düzeltmesi (Risk düşük)
+        used_beta = min(beta, 0.75) 
+
+    # SENARYO 2: ROKET (NVDA, TSLA, Startup)
+    # Hızlı Büyüyen (>%15) veya Genç (<10)
+    elif (growth > 0.15) or (age < 10):
+        profile = "🚀 ROKET (High Growth)"
+        
+        forecast_years = 15       # Uzun tahmin lazım (S eğrisi)
+        perpetual_g = 0.035       # %3.5 (Ekonomiden hızlı büyür)
+        reinvestment_rate = 0.50  # %50 Yatırım (Büyümek için para yakar)
+        target_wacc_cap = 0.12    # Riskli olduğu için WACC yüksek olabilir
+        
+        used_beta = max(beta, 1.2) # Beta yüksek
+
+    # SENARYO 3: STANDART (THYAO, SISE, FORD)
     else:
-        # Ortalama Sanayi (THY, Ford)
         profile = "🏭 STANDART SANAYİ"
-        reinvestment_rate = 0.25 # Dengeli (%25)
-        used_growth_start = 0.08
         
-    # --- ADIM 2: WACC ---
+        forecast_years = 10
+        perpetual_g = 0.030
+        reinvestment_rate = 0.25
+        target_wacc_cap = 0.10
+        used_beta = beta
+
+    # --- HESAPLAMA ---
+    
+    # 1. WACC
     rf = 0.04
     rm = 0.05
-    
-    # Beta Düzeltmesi (LMT için beta düşük kalmalı)
-    adjusted_beta = beta
-    if profile == "🐄 NAKİT İNEĞİ (Cash Cow)":
-        adjusted_beta = min(beta, 0.8) # Risk algısını düşür
-    
-    cost_equity = rf + adjusted_beta * rm
+    cost_equity = rf + used_beta * rm
     
     market_cap = data['shares'] * data['current_price']
     total_val = market_cap + data['total_debt']
@@ -152,45 +156,57 @@ def calculate_dcf(data, years, g, manual_wacc):
     
     wacc = (w_e * cost_equity) + (w_d * 0.055 * (1 - 0.21))
     
-    if manual_wacc: wacc = manual_wacc
+    # Otopilot WACC Ayarı (Değerlemeyi makul sınırlarda tutmak için)
+    # Hesaplanan WACC, hedeflenen tavandan yüksekse indir.
+    # Ama %6'nın altına da inmesin.
+    wacc = max(0.06, min(wacc, target_wacc_cap))
     
-    # Güvenlik kilidi (g vs wacc)
-    if g >= wacc: g = wacc - 0.005
+    # 2. BÜYÜME (g vs WACC Kilidi)
+    # g, WACC'tan büyük olamaz.
+    if perpetual_g >= wacc:
+        perpetual_g = wacc - 0.005
 
-    # --- ADIM 3: PROJEKSİYON ---
+    # 3. NAKİT AKIŞI
     current_margin = data['ebit_margin']
-    target_margin = current_margin
     
-    # Startup ise marjlar zamanla iyileşir
-    if profile == "🚀 ROKET (Startup/Growth)" and current_margin < 0.15:
-        target_margin = 0.20 # Gelecekte %20 marja ulaşır
-        
-    margins = np.linspace(current_margin, target_margin, years)
-    growth_rates = np.linspace(used_growth_start, g, years)
+    # Marj Hedefi: Roketse iyileşir, İnekse korunur
+    if profile == "🚀 ROKET (High Growth)" and current_margin < 0.20:
+        target_margin = 0.25
+    elif profile == "🐄 NAKİT İNEĞİ (Cash Cow)" and current_margin < 0.12:
+        target_margin = 0.12 # En kötü %12 olsun
+    else:
+        target_margin = current_margin # Mevcudu koru
+
+    margins = np.linspace(current_margin, target_margin, forecast_years)
+    
+    # Büyüme Hızı Projeksiyonu
+    # Başlangıç büyümesi: Şirketin şu anki büyümesi ile %8 arasında makul bir yer
+    start_g = max(min(data.get('revenue_growth', 0.05), 0.20), 0.05)
+    growth_rates = np.linspace(start_g, perpetual_g, forecast_years)
     
     fcffs = []
     last_rev = data['revenue']
     
-    for i in range(years):
+    for i in range(forecast_years):
         rev = last_rev * (1 + growth_rates[i])
         ebit = rev * margins[i]
         nopat = ebit * (1 - 0.21)
         
-        # Dinamik Yatırım Oranı Kullanımı
+        # Dinamik Yatırım: Nakit İneği ise az, Roket ise çok yatırım
         reinvestment = nopat * reinvestment_rate
         
         fcff = nopat - reinvestment
         fcffs.append(fcff)
         last_rev = rev
 
-    # --- ADIM 4: DEĞERLEME ---
-    discount_factors = [1 / ((1 + wacc) ** (y + 1)) for y in range(years)]
+    # 4. DEĞERLEME
+    discount_factors = [1 / ((1 + wacc) ** (y + 1)) for y in range(forecast_years)]
     pv_fcff = np.sum(np.array(fcffs) * np.array(discount_factors))
     
-    terminal_val = (fcffs[-1] * (1 + g)) / (wacc - g)
+    terminal_val = (fcffs[-1] * (1 + perpetual_g)) / (wacc - perpetual_g)
     if terminal_val < 0: terminal_val = 0
         
-    pv_terminal = terminal_val / ((1 + wacc) ** years)
+    pv_terminal = terminal_val / ((1 + wacc) ** forecast_years)
     
     enterprise_val = pv_fcff + pv_terminal
     equity_val = enterprise_val - data['total_debt'] + data['cash']
@@ -198,29 +214,78 @@ def calculate_dcf(data, years, g, manual_wacc):
     dcf_price = equity_val / data['shares']
     if dcf_price < 0: dcf_price = 0
     
-    return dcf_price, wacc, fcffs, profile, reinvestment_rate
+    # AI Karar Raporu
+    decisions = {
+        "profile": profile,
+        "years": forecast_years,
+        "wacc": wacc,
+        "g": perpetual_g,
+        "reinv": reinvestment_rate,
+        "margin_target": target_margin
+    }
+    
+    return dcf_price, flows, decisions
 
 # --- EKRAN ---
-if st.button("ANALİZİ BAŞLAT", type="primary"):
-    fetched_data, error = get_data(ticker)
-    
-    if error:
-        st.error(error)
-    elif fetched_data:
-        data = fetched_data
+if st.button("ANALİZ ET", type="primary"):
+    with st.spinner('Otopilot verileri analiz ediyor...'):
+        fetched_data, error = get_data(ticker)
         
-        price, wacc, flows, profile_name, reinv_rate = calculate_dcf(
-            data, forecast_years, perpetual_growth, wacc_input
-        )
-        
-        # ÜST BİLGİ KARTI
-        st.info(f"🧬 **Şirket Profili:** {profile_name} | **Strateji:** Kazancın %{reinv_rate*100:.0f}'u yatırıma gidiyor.")
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} $")
-        c2.metric("Adil Değer", f"{price:.2f} $")
-        
-        upside = (price / data['current_price']) - 1
-        c3.metric("Potansiyel", f"%{upside*100:.1f}", delta_color="normal" if upside > 0 else "inverse")
-        
-        st.bar_chart(flows)
+        # MANUEL GİRİŞ (YAHOO PATLARSA)
+        if error:
+            st.warning("⚠️ Yahoo veriyi vermedi. Mecburen manuel gireceğiz.")
+            with st.form("manual"):
+                c1, c2 = st.columns(2)
+                m_price = c1.number_input("Fiyat ($)", value=100.0)
+                m_shares = c2.number_input("Hisse Adedi (Milyon)", value=250.0)
+                m_rev = c1.number_input("Ciro (Milyon $)", value=50000.0)
+                m_ebit = c2.number_input("EBIT", value=8000.0)
+                m_debt = c1.number_input("Borç", value=5000.0)
+                m_cash = c2.number_input("Nakit", value=2000.0)
+                
+                # Otopilot için kritik sorular
+                st.markdown("---")
+                st.caption("Otopilotun karar vermesi için:")
+                m_beta = c1.slider("Beta (Risk)", 0.5, 2.0, 0.8)
+                m_age = c2.slider("Şirket Yaşı", 1, 100, 20)
+                m_growth = c1.slider("Büyüme (%)", 0, 50, 5) / 100
+                
+                if st.form_submit_button("HESAPLA"):
+                    fetched_data = {
+                        'ticker': ticker, 'currency': 'USD',
+                        'current_price': m_price, 'shares': m_shares, 
+                        'total_debt': m_debt, 'cash': m_cash, 'revenue': m_rev,
+                        'ebit': m_ebit, 'ebit_margin': m_ebit/m_rev if m_rev else 0,
+                        'beta': m_beta, 'age': m_age, 'revenue_growth': m_growth
+                    }
+                    error = None
+
+        if fetched_data and not error:
+            data = fetched_data
+            
+            # OTOPİLOT DEVREYE GİRİYOR
+            price, flows, decisions = autopilot_dcf(data)
+            
+            # --- SONUÇ EKRANI ---
+            
+            # 1. Profil Kartı
+            st.info(f"🧬 **Algılanan Kimlik:** {decisions['profile']}")
+            
+            # 2. Rakamlar
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} $")
+            c2.metric("Otopilot Değeri", f"{price:.2f} $")
+            
+            upside = (price / data['current_price']) - 1
+            c3.metric("Potansiyel", f"%{upside*100:.1f}", delta_color="normal" if upside > 0 else "inverse")
+            
+            # 3. "Neden Böyle Yaptım?" Bölümü (Şeffaflık)
+            with st.expander("🤔 Yapay Zeka bu sonuca nasıl ulaştı?"):
+                st.write(f"""
+                - **Süre:** Şirket yapısına uygun olarak **{decisions['years']} yıllık** projeksiyon yaptım.
+                - **Büyüme (g):** Sonsuza kadar yıllık **%{decisions['g']*100:.1f}** büyüyeceğini varsaydım.
+                - **Risk (WACC):** İskonto oranını **%{decisions['wacc']*100:.1f}** olarak belirledim.
+                - **Yatırım:** Kazancının sadece **%{decisions['reinv']*100:.0f}**'ini yatırıma harcadığını (nakit akışının güçlü olduğunu) varsaydım.
+                """)
+            
+            st.bar_chart(flows)
