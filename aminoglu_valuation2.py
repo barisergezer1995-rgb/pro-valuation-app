@@ -6,26 +6,26 @@ import requests
 import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Ultra Boğa", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Amınoğlu Realist", page_icon="⚖️", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🛡️ Amınoğlu Ultra Boğa Değerleme A.Ş. (v15.0)")
+st.title("⚖️ Amınoğlu Realist (v16.0)")
 st.markdown("""
-**Muhafazakar & Gerçekçi:** Canlı faiz oranlarını kullanır, güvenlik marjı bırakır. 
-*Faizler yükseldiğinde hisse değerlerinin düşmesi normaldir.*
+**Dengeli Mod:** Türkiye için **Enflasyon Ayarlı**, ABD için **Canlı Faizli**.
+*Ne Polyanna, Ne Cenaze Kaldırıcısı. Tam kararında.*
 """)
 
 # --- YAN MENÜ ---
 with st.sidebar:
     st.header("🔍 Analiz")
-    ticker = st.text_input("Hisse Sembolü", value="LMT").upper()
+    ticker = st.text_input("Hisse Sembolü", value="THYAO.IS").upper()
     
     st.markdown("---")
     st.subheader("🔑 API Ayarları")
     default_key = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO"
     api_key = st.text_input("FMP API Key", value=default_key, type="password")
     
-    st.info("Mod: **MUHAFAZAKAR** (Güvenlik Marjı Aktif)")
+    st.success("Mod: **REALİST** (TR Enflasyon Koruması Aktif)")
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -35,45 +35,39 @@ def safe_float(val):
     except:
         return 0.0
 
-# --- 1. CANLI FAİZ ORANI (RISK FREE RATE) ---
+# --- 1. CANLI FAİZ (RISK FREE RATE) ---
 @st.cache_data(ttl=3600)
 def get_live_risk_free_rate(currency="USD"):
     try:
         if currency == "USD":
-            # ABD 10 Yıllık Devlet Tahvili (^TNX)
+            # ABD için canlı veriyi çek
             tnx = yf.Ticker("^TNX")
             rate = tnx.fast_info.get('last_price', None)
-            
             if rate is None:
                 hist = tnx.history(period="1d")
                 rate = hist['Close'].iloc[-1] if not hist.empty else 4.2
-            
-            # Yahoo bunu tam sayı verir (örn: 4.2), biz yüzde yapalım
             return rate / 100
         
         elif currency == "TRY":
-            # Türkiye için "Makul/Muhafazakar" Beklenti
-            # Şu an %45 olsa da, model uzun vadeyi (10 yıl) ölçer.
-            # 10 Yıllık ortalama beklenti %30 civarıdır (Muhafazakar)
-            return 0.30
+            # KRİTİK AYAR: Türkiye için Politika Faizi (%50) ALINMAZ.
+            # Uzun vadeli tahvil faizi veya makul getiri beklentisi alınır.
+            # %22 ideal bir uzun vade beklentisidir.
+            return 0.22
             
         else:
-            return 0.04 # Euro vs.
+            return 0.035 # Euro
 
     except:
-        return 0.045 # Veri yoksa %4.5 al (Muhafazakar)
+        return 0.04
 
 # --- 2. VERİ ÇEKME MOTORU (HİBRİT) ---
 def get_data_hybrid(symbol, key):
-    # .IS (BIST) Kontrolü
     if ".IS" in symbol:
         return get_data_yahoo(symbol)
     
-    # ABD için FMP
     data, err = get_data_fmp(symbol, key)
     if data: return data, None
     
-    # FMP patlarsa Yahoo
     return get_data_yahoo(symbol)
 
 def get_data_fmp(symbol, key):
@@ -99,7 +93,7 @@ def get_data_fmp(symbol, key):
             'revenue': safe_float(inc.get('revenue')) / 1e6,
             'ebit': safe_float(inc.get('operatingIncome')) / 1e6,
         }
-        data['ebit_margin'] = data['ebit'] / data['revenue'] if data['revenue'] else 0.10
+        data['ebit_margin'] = data['ebit'] / data['revenue'] if data['revenue'] else 0.15
         return data, None
     except:
         return None, "FMP Hatası"
@@ -133,34 +127,29 @@ def get_data_yahoo(symbol):
             'shares': safe_float(s.fast_info.get('shares', 1e6))/1e6,
             'beta': 1.0,
             'total_debt': debt, 'cash': cash, 'revenue': rev, 'ebit': ebit,
-            'ebit_margin': ebit/rev if rev else 0.10
+            'ebit_margin': ebit/rev if rev else 0.15
         }
         return data, None
     except:
         return None, "Yahoo Hatası"
 
-# --- 3. MUHAFAZAKAR HESAPLAMA MOTORU ---
-def calculate_conservative(data):
-    # 1. CANLI FAİZ (Zemin)
+# --- 3. REALİST HESAPLAMA MOTORU (DENGELİ) ---
+def calculate_balanced(data):
+    # 1. FAİZ VE WACC AYARI
     rf = get_live_risk_free_rate(data['currency'])
     
-    # 2. PİYASA RİSK PRİMİ (Standart)
-    # Boğa modunda %4.5 almıştık. Muhafazakar modda standart %6.0 alıyoruz.
-    rm = 0.06 
+    # Beta Düzeltmesi (0.8 ile 1.4 arasına sıkıştır)
+    raw_beta = data.get('beta', 1.0)
+    beta = max(0.8, min(raw_beta, 1.4))
     
-    # 3. BETA (Risk Katsayısı)
-    # Şirketin riskini küçümseme. Beta 0.8'in altındaysa bile en az 0.8 al.
-    beta = data.get('beta', 1.0)
-    beta = max(0.8, beta) 
-    
+    rm = 0.055 # %5.5 Piyasa Riski (Dengeli)
     cost_equity = rf + (beta * rm)
     
-    # Borç Maliyeti (Risk Free + Spread)
-    # Faizler yüksekse borçlanmak pahalıdır.
-    cost_debt = rf + 0.025 # %2.5 Spread ekle
-    tax_rate = 0.21
+    # Borç Maliyeti
+    cost_debt = rf + 0.02
+    tax_rate = 0.25 if data['currency'] == 'TRY' else 0.21
     
-    # WACC
+    # WACC Hesabı
     market_cap = data['shares'] * data['current_price']
     total_val = market_cap + data['total_debt']
     if total_val <= 0: total_val = 1.0
@@ -169,41 +158,44 @@ def calculate_conservative(data):
     
     wacc = (w_e * cost_equity) + (w_d * cost_debt * (1 - tax_rate))
     
-    # FREN YOK! 
-    # Faizler %5 ise ve risk primiyle WACC %10 çıkıyorsa, %10 olarak kalsın.
-    # Şirketi yapay olarak değerli göstermiyoruz.
-    
-    # 4. GÜVENLİK MARJI (Growth vs WACC Gap)
-    # Boğa modunda %1.5 fark bırakmıştık. 
-    # Burada en az %3.0 veya %3.5 FARK OLMALI.
-    # Sonsuz büyüme (g) genelde GSYH büyümesi kadardır (%2.5 - %3.0).
-    perpetual_g = 0.025 
-    
+    # --- KRİTİK: TÜRKİYE ENFLASYON KORUMASI ---
+    # Eğer WACC %30-40 çıkıyorsa bu model çalışmaz. 
+    # TR için WACC'ı "Reel Getiri" seviyesine çekeceğiz.
     if data['currency'] == 'TRY':
-        perpetual_g = 0.10 # TR Enflasyonuna göre muhafazakar büyüme
+        # TR için WACC tavanı %24.
+        # Bu oran, şirketin enflasyon üzerinde getirmesi gereken makul yüktür.
+        if wacc > 0.24: wacc = 0.24
         
-    # Eğer WACC ile g birbirine çok yakınsa, g'yi düşür.
-    safety_margin = 0.035 # %3.5 Güvenlik marjı
-    if wacc - perpetual_g < safety_margin:
-        perpetual_g = wacc - safety_margin
+        # TR için Büyüme tabanı %12 (Enflasyonel büyüme garantisi)
+        # Şirket hiç iş yapmasa bile fiyatlara zam yaparak %12 büyür.
+        perpetual_g = 0.12 
+        
+    else:
+        # ABD için tavan %9.5
+        if wacc > 0.095: wacc = 0.095
+        # ABD için büyüme %2.5
+        perpetual_g = 0.025
 
-    # 5. YATIRIM ORANI (Reinvestment)
-    # Şirketler hayatta kalmak için yatırım yapmalıdır.
-    # Nakdin %35'i içeriye gider (Boğa modunda %10 idi).
-    reinvestment_rate = 0.35 
+    # Güvenlik Kontrolü: WACC ile g arası çok darsa aç
+    if wacc - perpetual_g < 0.02:
+        perpetual_g = wacc - 0.02 # En az %2 fark olsun (Matematik patlamasın)
+
+    # 2. YATIRIM ORANI (Reinvestment)
+    # Boğa'da %10, Muhafazakar'da %35 idi.
+    # Dengeli'de %20-25 arası.
+    reinvestment_rate = 0.22 
     
-    # 6. PROJEKSİYON
+    # 3. PROJEKSİYON
     years = 10
     
-    # Marjları iyileştirme, mevcudu koru (veya sektör ortalamasına çek)
-    current_margin = data.get('ebit_margin', 0.10)
-    # Çok uçuk marj varsa (%40 üzeri), rekabet gelir düşer diye varsay
-    target_margin = min(current_margin, 0.30) 
+    # Marj: Mevcut marjı koru ama %10'un altındaysa %12'ye çek (İyileşme varsayımı)
+    current_margin = data.get('ebit_margin', 0.15)
+    target_margin = max(current_margin, 0.12)
     
     margins = np.linspace(current_margin, target_margin, years)
     
-    # Büyüme: İlk yıllar biraz hızlı, sonra terminale düş
-    start_g = 0.08 if data['currency'] == 'USD' else 0.25
+    # Büyüme: Başlangıç büyümesi TR için yüksek, ABD için normal
+    start_g = 0.25 if data['currency'] == 'TRY' else 0.08
     growth_rates = np.linspace(start_g, perpetual_g, years)
     
     fcffs = []
@@ -213,7 +205,6 @@ def calculate_conservative(data):
         rev = last_rev * (1 + growth_rates[i])
         nopat = rev * margins[i] * (1 - tax_rate)
         
-        # Ciddi yatırım oranı
         fcff = nopat * (1 - reinvestment_rate)
         fcffs.append(fcff)
         last_rev = rev
@@ -223,46 +214,44 @@ def calculate_conservative(data):
     
     equity = pv - data['total_debt'] + data['cash']
     price = equity / data['shares']
-    if price < 0: price = 0.0
+    if price < 0: price = 0.01
     
-    return price, fcffs, {"rf": rf, "wacc": wacc, "g": perpetual_g, "gap": wacc-perpetual_g}
+    return price, fcffs, {"wacc": wacc, "g": perpetual_g, "reinv": reinvestment_rate}
 
 # --- EKRAN ---
-if st.button("MUHAFAZAKAR ANALİZ ET", type="primary"):
-    with st.spinner('Faizler kontrol ediliyor, balonlar söndürülüyor...'):
+if st.button("ANALİZ ET", type="primary"):
+    with st.spinner('Piyasa verileri işleniyor...'):
         data, err = get_data_hybrid(ticker, api_key)
         
         if data:
-            price, flows, metrics = calculate_conservative(data)
+            price, flows, metrics = calculate_balanced(data)
             
-            # Üst Bilgi
+            # Kaynak
             st.success(f"✅ Veri Kaynağı: **{data['source']}**")
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} {data['currency']}")
-            c2.metric("Muhafazakar Değer", f"{price:.2f} {data['currency']}")
+            c2.metric("Realist Değer", f"{price:.2f} {data['currency']}")
             
             upside = (price / data['current_price']) - 1 if data['current_price'] else 0
             color = "normal" if upside > 0 else "inverse"
-            c3.metric("Güvenlik Marjı", f"%{upside*100:.1f}", delta_color=color)
+            c3.metric("Potansiyel", f"%{upside*100:.1f}", delta_color=color)
             
             st.markdown("---")
             
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Canlı Faiz (Risk Free)", f"%{metrics['rf']*100:.2f}")
-            k2.metric("WACC (Maliyet)", f"%{metrics['wacc']*100:.2f}", help="Faizler yüksek olduğu için WACC yüksek çıkar.")
-            k3.metric("Terminal Büyüme", f"%{metrics['g']*100:.2f}")
-            k4.metric("Güvenlik Aralığı", f"%{metrics['gap']*100:.2f}", help="WACC ile Büyüme arasındaki fark. Ne kadar yüksekse o kadar güvenli.")
+            # Detaylar
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Dengeli WACC", f"%{metrics['wacc']*100:.2f}", help="TR için %24, ABD için %9.5 ile sınırlandı.")
+            k2.metric("Terminal Büyüme", f"%{metrics['g']*100:.2f}", help="TR için enflasyon, ABD için GSYH büyümesi.")
+            k3.metric("Yatırım Oranı", f"%{metrics['reinv']*100:.0f}", help="Şirket kazancının %22'sini yatırıma ayırıyor.")
             
             st.bar_chart(flows)
             
-            if upside < 0:
-                st.warning(f"⚠️ **SONUÇ:** Bu modelle hisse **%{abs(upside*100):.1f} pahalı** görünüyor. Bunun sebebi yüksek faiz ortamında şirketin gelecekteki nakitlerinin bugünkü değerinin düşmesidir. Benjamin Graham olsa 'Bekle' derdi.")
-            else:
-                st.success(f"🎯 **FIRSAT:** Yüksek faize ve muhafazakar varsayımlara rağmen hisse hala iskontolu! Bu gerçek bir 'Değer Yatırımı' fırsatı olabilir.")
+            if data['currency'] == 'TRY':
+                st.info("ℹ️ **Bilgi:** Türk hisseleri için WACC %24 ile sınırlandı ve Enflasyon büyümesi eklendi. Bu sayede 'Yüksek Faiz Yanılgısı' giderildi.")
 
         else:
-            st.error("Veri alınamadı. Manuel giriş gerekebilir.")
+            st.error("Veri alınamadı. Manuel giriş yapınız.")
             with st.expander("Manuel Giriş", expanded=True):
                  with st.form("manual"):
                     c1, c2 = st.columns(2)
