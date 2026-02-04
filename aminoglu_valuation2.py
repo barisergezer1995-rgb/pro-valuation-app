@@ -6,20 +6,20 @@ import requests
 import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Ultimate", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Amınoğlu Akıllı Rota", page_icon="🧭", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🛡️ Amınoğlu Ultimate Değerleme (v8.0)")
-st.markdown("Hibrit Motor: FMP (Profesyonel) + Yahoo (Yedek) + Manuel (Son Çare)")
+st.title("🧭 Amınoğlu Akıllı Rota (v9.0)")
+st.markdown("Türk hisseleri için Yahoo, ABD hisseleri için FMP kullanan hibrit motor.")
 
 # --- YAN MENÜ ---
 with st.sidebar:
     st.header("🔍 Analiz")
-    ticker = st.text_input("Hisse Sembolü", value="LMT").upper()
-    st.caption("Örn: AAPL, TSLA (FMP çeker) | THYAO.IS, ASELS.IS (Yahoo çeker)")
+    ticker = st.text_input("Hisse Sembolü", value="THYAO.IS").upper()
+    st.caption("Not: BIST için sonuna .IS ekleyin (Örn: GARAN.IS). ABD için direkt yazın (Örn: AAPL).")
 
 # --- AYARLAR ---
-API_KEY_FMP = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO" # Senin Key'in
+API_KEY_FMP = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO" 
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -29,33 +29,33 @@ def safe_float(val):
     except:
         return 0.0
 
-# --- 1. KAYNAK: FMP API (ÖNCELİKLİ) ---
+# --- 1. KAYNAK: FMP API (ABD Hisseleri İçin) ---
 def get_data_fmp(symbol):
     try:
-        # Profil ve Fiyat
+        # FMP BIST hisselerini desteklemez, boşuna sorgu atma
+        if ".IS" in symbol: return None
+
         quote_url = f"https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey={API_KEY_FMP}"
         profile_url = f"https://financialmodelingprep.com/api/v3/profile/{symbol}?apikey={API_KEY_FMP}"
         
-        quote_res = requests.get(quote_url, timeout=3).json() # 3sn bekle
-        if not quote_res or 'Error Message' in quote_res: return None # Bulamazsa çık
+        quote_res = requests.get(quote_url, timeout=2).json()
+        if not quote_res: return None
         
         quote = quote_res[0]
-        prof_res = requests.get(profile_url, timeout=3).json()
+        prof_res = requests.get(profile_url, timeout=2).json()
         profile = prof_res[0] if prof_res else {}
 
-        # Finansallar
         inc_url = f"https://financialmodelingprep.com/api/v3/income-statement/{symbol}?limit=1&apikey={API_KEY_FMP}"
         bal_url = f"https://financialmodelingprep.com/api/v3/balance-sheet-statement/{symbol}?limit=1&apikey={API_KEY_FMP}"
         
-        inc_res = requests.get(inc_url, timeout=3).json()
-        bal_res = requests.get(bal_url, timeout=3).json()
+        inc_res = requests.get(inc_url, timeout=2).json()
+        bal_res = requests.get(bal_url, timeout=2).json()
         
         if not inc_res or not bal_res: return None
         
         inc = inc_res[0]
         bal = bal_res[0]
 
-        # Veri Paketleme
         data = {}
         data['source'] = "FMP (Resmi API)"
         data['ticker'] = symbol
@@ -67,7 +67,7 @@ def get_data_fmp(symbol):
         if data['shares'] <= 0: data['shares'] = 1.0
 
         data['beta'] = safe_float(profile.get('beta', 1.0))
-        data['revenue_growth'] = 0.08 # FMP tek sorguda growth vermiyor, varsayılan
+        data['revenue_growth'] = 0.08
         
         ipo_date = profile.get('ipoDate')
         if ipo_date:
@@ -88,39 +88,40 @@ def get_data_fmp(symbol):
         return data
 
     except:
-        return None # Hata olursa sessizce None dön, Yahoo denensin
+        return None
 
-# --- 2. KAYNAK: YAHOO FINANCE (YEDEK) ---
+# --- 2. KAYNAK: YAHOO FINANCE (Türk Hisseleri & Yedek) ---
 def get_data_yahoo(symbol):
     try:
         stock = yf.Ticker(symbol)
         
-        # Hızlı veri
+        # Fast Info Dene
         current_price = stock.fast_info.get('last_price', None)
         shares = stock.fast_info.get('shares', None)
         
+        # Fiyat yoksa History dene
         if current_price is None or np.isnan(safe_float(current_price)):
-            # History dene
             hist = stock.history(period="1d")
             if not hist.empty:
                 current_price = hist['Close'].iloc[-1]
             else:
-                return None # Fiyat yoksa çık
+                return None
 
         bs = stock.balance_sheet
         is_stmt = stock.financials
         
         if bs.empty or is_stmt.empty:
-            return None # Tablo yoksa çık
+            return None
 
         data = {}
-        data['source'] = "Yahoo (Yedek)"
+        data['source'] = "Yahoo Finance"
         data['ticker'] = symbol
-        data['currency'] = stock.fast_info.get('currency', 'USD')
+        data['currency'] = stock.fast_info.get('currency', 'TRY' if ".IS" in symbol else 'USD')
         data['current_price'] = safe_float(current_price)
         data['shares'] = safe_float(shares) / 1e6 
         if data['shares'] <= 0: data['shares'] = 1.0
 
+        # Yahoo'dan Beta ve Büyüme (Hata verirse varsayılan)
         try:
             data['beta'] = stock.info.get('beta', 1.0)
             data['revenue_growth'] = stock.info.get('revenueGrowth', 0.05)
@@ -128,11 +129,12 @@ def get_data_yahoo(symbol):
             data['beta'] = 1.0
             data['revenue_growth'] = 0.05
             
+        # Yaş hesabı
         first_trade = stock.info.get('firstTradeDateEpochUtc', None) if 'info' in dir(stock) else None
         if first_trade:
             data['age'] = datetime.datetime.now().year - datetime.datetime.fromtimestamp(first_trade).year
         else:
-            data['age'] = 15
+            data['age'] = 20
 
         data['total_debt'] = safe_float(bs.iloc[:, 0].get('Total Debt')) / 1e6
         data['cash'] = safe_float(bs.iloc[:, 0].get('Cash And Cash Equivalents')) / 1e6
@@ -152,34 +154,39 @@ def get_data_yahoo(symbol):
     except:
         return None
 
-# --- ANA KONTROL MERKEZİ ---
+# --- AKILLI ROTA YÖNETİCİSİ ---
 @st.cache_data(ttl=3600)
-def get_data_hybrid(symbol):
-    # 1. Önce Kralı Dene (FMP)
-    data = get_data_fmp(symbol)
-    if data:
-        return data, None
+def get_data_router(symbol):
+    # 1. Türk Hissesi mi? (Direkt Yahoo'ya git, FMP ile vakit kaybetme)
+    if ".IS" in symbol:
+        data = get_data_yahoo(symbol)
+        if data: return data, None
+        return None, "Yahoo (BIST) veri vermedi. Manuel giriniz."
     
-    # 2. Olmadı mı? Yedek Subayı Dene (Yahoo)
+    # 2. ABD Hissesi mi? (Önce FMP dene - daha kaliteli)
+    data = get_data_fmp(symbol)
+    if data: return data, None
+    
+    # 3. FMP patladıysa Yahoo'yu yedek olarak dene
     data = get_data_yahoo(symbol)
-    if data:
+    if data: 
+        data['source'] = "Yahoo (FMP çalışmadı)"
         return data, None
         
-    # 3. Hiçbiri Olmadı
     return None, "Tüm kaynaklar tükendi."
 
-# --- OTOPİLOT HESAPLAMA ---
+# --- OTOPİLOT ---
 def autopilot_dcf(data):
     age = data.get('age', 15)
     beta = data.get('beta', 1.0)
     
-    # Karar Mekanizması
+    # Kategori Belirle
     if (age > 15) and (beta < 0.9): 
         profile = "🐄 NAKİT İNEĞİ (Cash Cow)"
         forecast_years = 7
         perpetual_g = 0.025
         reinvestment_rate = 0.05
-        target_wacc_cap = 0.075
+        target_wacc_cap = 0.08
         used_beta = min(beta, 0.75) 
 
     elif (beta > 1.3) or (age < 10): 
@@ -198,8 +205,14 @@ def autopilot_dcf(data):
         target_wacc_cap = 0.10
         used_beta = beta
 
+    # WACC
     rf = 0.04
     rm = 0.05
+    # Türk hissesi ise enflasyon farkı ekle (Basit düzeltme)
+    if ".IS" in data['ticker']: 
+        rf = 0.25 # Türkiye Risksiz Faiz (Tahmini)
+        rm = 0.05
+    
     cost_equity = rf + used_beta * rm
     
     market_cap = data['shares'] * data['current_price']
@@ -209,16 +222,24 @@ def autopilot_dcf(data):
     w_e = market_cap / total_val
     w_d = data['total_debt'] / total_val
     
-    wacc = (w_e * cost_equity) + (w_d * 0.055 * (1 - 0.21))
-    wacc = max(0.06, min(wacc, target_wacc_cap))
+    # TR vergi %25, ABD %21
+    tax_rate = 0.25 if ".IS" in data['ticker'] else 0.21
+    cost_debt = 0.30 if ".IS" in data['ticker'] else 0.055 # TR Borç faizi yüksek
+    
+    wacc = (w_e * cost_equity) + (w_d * cost_debt * (1 - tax_rate))
+    
+    # Otopilot Freni
+    if ".IS" not in data['ticker']:
+        wacc = max(0.06, min(wacc, target_wacc_cap)) # Sadece ABD için frenle
     
     if perpetual_g >= wacc: perpetual_g = wacc - 0.005
 
+    # Projeksiyon
     current_margin = data['ebit_margin']
     target_margin = current_margin
     
-    if profile == "🚀 ROKET (High Growth)" and current_margin < 0.20: target_margin = 0.25
-    elif profile == "🐄 NAKİT İNEĞİ (Cash Cow)" and current_margin < 0.12: target_margin = 0.12
+    if profile == "🚀 ROKET" and current_margin < 0.20: target_margin = 0.25
+    elif profile == "🐄 NAKİT İNEĞİ" and current_margin < 0.12: target_margin = 0.12
 
     margins = np.linspace(current_margin, target_margin, forecast_years)
     growth_rates = np.linspace(0.08, perpetual_g, forecast_years)
@@ -229,7 +250,7 @@ def autopilot_dcf(data):
     for i in range(forecast_years):
         rev = last_rev * (1 + growth_rates[i])
         ebit = rev * margins[i]
-        nopat = ebit * (1 - 0.21)
+        nopat = ebit * (1 - tax_rate)
         reinvestment = nopat * reinvestment_rate
         fcff = nopat - reinvestment
         fcffs.append(fcff)
@@ -251,32 +272,29 @@ def autopilot_dcf(data):
 
 # --- EKRAN ---
 if st.button("ANALİZ ET", type="primary"):
-    with st.spinner('Hibrit Motor çalışıyor (FMP -> Yahoo)...'):
-        fetched_data, error = get_data_hybrid(ticker)
+    with st.spinner('En uygun veri kaynağına bağlanılıyor...'):
+        fetched_data, error = get_data_router(ticker)
         
-        # MANUEL GİRİŞ (EĞER FMP VE YAHOO İKİSİ DE ÇÖKERSE)
         if error:
-            st.warning("⚠️ Tüm veri kaynakları (FMP & Yahoo) yanıt vermedi. Manuel Giriş:")
+            st.warning(f"⚠️ {error}")
+            st.warning("Veri çekilemedi. Manuel giriş yapınız.")
             with st.form("manual"):
                 c1, c2 = st.columns(2)
-                m_price = c1.number_input("Fiyat ($)", value=100.0)
-                m_shares = c2.number_input("Hisse (Milyon)", value=250.0)
-                m_rev = c1.number_input("Ciro (Milyon $)", value=50000.0)
-                m_ebit = c2.number_input("EBIT", value=8000.0)
-                m_debt = c1.number_input("Borç", value=5000.0)
-                m_cash = c2.number_input("Nakit", value=2000.0)
-                
-                st.caption("Otopilot için tahminler:")
-                m_beta = c1.slider("Beta", 0.5, 2.0, 0.8)
+                m_price = c1.number_input("Fiyat", value=100.0)
+                m_shares = c2.number_input("Hisse Adedi (Milyon)", value=100.0)
+                m_rev = c1.number_input("Ciro (Milyon)", value=10000.0)
+                m_ebit = c2.number_input("EBIT", value=2000.0)
+                m_debt = c1.number_input("Borç", value=1000.0)
+                m_cash = c2.number_input("Nakit", value=500.0)
                 m_age = c2.slider("Yaş", 1, 100, 20)
                 
-                if st.form_submit_button("HESAPLA"):
+                if st.form_submit_button("MANUEL HESAPLA"):
                     fetched_data = {
-                        'ticker': ticker, 'currency': 'USD', 'source': 'Manuel',
+                        'ticker': ticker, 'currency': 'TRY' if ".IS" in ticker else 'USD', 'source': 'Manuel',
                         'current_price': m_price, 'shares': m_shares, 
                         'total_debt': m_debt, 'cash': m_cash, 'revenue': m_rev,
                         'ebit': m_ebit, 'ebit_margin': m_ebit/m_rev if m_rev else 0,
-                        'beta': m_beta, 'age': m_age
+                        'beta': 1.0, 'age': m_age
                     }
                     error = None
 
@@ -284,27 +302,14 @@ if st.button("ANALİZ ET", type="primary"):
             data = fetched_data
             price, flows, decisions = autopilot_dcf(data)
             
-            # ÜST BİLGİ: Kaynak Gösterimi
-            source = data.get('source', 'Bilinmiyor')
-            if "FMP" in source:
-                st.success(f"✅ Veri Kaynağı: **{source}** (En Güvenilir)")
-            elif "Yahoo" in source:
-                st.warning(f"⚠️ Veri Kaynağı: **{source}** (Yedek Sistem Devrede)")
-            else:
-                st.info(f"ℹ️ Veri Kaynağı: **{source}**")
-
-            st.info(f"🧬 **Şirket Profili:** {decisions['profile']}")
+            st.success(f"✅ Kaynak: **{data.get('source')}** | Profil: **{decisions['profile']}**")
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} {data['currency']}")
-            c2.metric("Otopilot Değeri", f"{price:.2f} {data['currency']}")
+            c1.metric("Fiyat", f"{data['current_price']:.2f} {data['currency']}")
+            c2.metric("Değer", f"{price:.2f} {data['currency']}")
             
             upside = (price / data['current_price']) - 1 if data['current_price'] else 0
             c3.metric("Potansiyel", f"%{upside*100:.1f}", delta_color="normal" if upside > 0 else "inverse")
             
-            with st.expander("Detaylar"):
-                st.write(f"- WACC: %{decisions['wacc']*100:.2f}")
-                st.write(f"- Büyüme (g): %{decisions['g']*100:.2f}")
-                st.write(f"- Yatırım Oranı: %{decisions['reinv']*100:.0f}")
-            
+            st.caption(f"WACC: %{decisions['wacc']*100:.1f} | Yatırım Oranı: %{decisions['reinv']*100:.0f}")
             st.bar_chart(flows)
