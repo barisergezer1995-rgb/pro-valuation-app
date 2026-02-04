@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
+import requests
+import requests_cache # <-- Yeni silahımız bu
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Amınoğlu Değerleme", page_icon="🦄", layout="wide")
@@ -29,7 +31,6 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🦄 Değerleme Modu")
     
-    # Burası dinamik olacak, aşağıda mantığı var
     force_startup = st.checkbox("Startup Modunu Zorla (Manuel)")
     if force_startup:
         sector_multiple = st.slider("Sektör Çarpanı (Price/Sales)", 1.0, 50.0, 5.0, 0.5)
@@ -37,18 +38,28 @@ with st.sidebar:
         sector_multiple = 5.0
 
 # --- FONKSİYONLAR ---
+@st.cache_resource # Resource olarak cache'liyoruz ki session hep açık kalsın
+def get_session():
+    # Yahoo'yu kandırmak için güçlü bir session hazırlıyoruz
+    session = requests_cache.CachedSession('yfinance.cache')
+    session.headers['User-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    return session
+
 @st.cache_data(ttl=3600)
 def get_data(symbol):
-    # DÜZELTME: Session kısmını kaldırdık çünkü yeni yfinance sürümü bunu kendi yapıyor.
-    stock = yf.Ticker(symbol)
+    # Özel session'ı çağırıyoruz
+    session = get_session()
+    
+    # yfinance 0.2.40 sürümü bu session parametresini sorunsuz kabul eder
+    stock = yf.Ticker(symbol, session=session)
     
     try:
+        # Önce basit bir veri çekmeyi deneyelim
         info = stock.info
     except Exception as e:
-        # Eğer yine de hata alırsak kullanıcıya temiz bilgi verelim
-        return None, f"Yahoo Finance bağlantı hatası: {str(e)}. (Lütfen sayfayı yenileyip tekrar deneyin)"
+        return None, "Yahoo Bağlantı Hatası (Rate Limit). Lütfen 1-2 dakika bekleyip tekrar deneyin."
 
-    if 'currentPrice' not in info:
+    if not info or 'currentPrice' not in info:
         return None, "Veri bulunamadı. Sembolü kontrol edin veya Yahoo geçici engel koymuş olabilir."
         
     bs = stock.balance_sheet
@@ -116,7 +127,6 @@ def calculate_dcf(data, years, g, manual_wacc=None, multiple=None):
     
     for gr in growth_rates:
         rev = last_rev * (1 + gr)
-        # Basit FCFF Tahmini
         ebit = rev * data['ebit_margin']
         nopat = ebit * (1 - data['tax_rate'])
         reinvestment = nopat * 0.25
@@ -151,11 +161,9 @@ if st.button("Analizi Başlat", type="primary"):
         if error:
             st.error(error)
         else:
-            # --- AKILLI MOD SEÇİMİ ---
             is_old_company = data['company_age'] > 15
             is_loss_making = data['ebit'] < 0
             
-            # Hangi modu kullanacağız?
             use_startup_mode = False
             
             if force_startup:
@@ -163,7 +171,6 @@ if st.button("Analizi Başlat", type="primary"):
             elif is_loss_making and not is_old_company:
                 use_startup_mode = True
             
-            # Hesaplama
             dcf_val, used_wacc, flows, mult_val = calculate_dcf(
                 data, forecast_years, perpetual_growth, wacc_input,
                  sector_multiple if use_startup_mode else None
@@ -191,11 +198,9 @@ if st.button("Analizi Başlat", type="primary"):
             
             upside = (final_val / data['current_price']) - 1
             
-            # Renkli Potansiyel Gösterimi
             delta_color = "normal" if upside > 0 else "inverse"
             col3.metric("Potansiyel", f"%{upside*100:.2f}", delta=f"{upside*100:.1f}%", delta_color=delta_color)
 
-            # Grafik
             st.bar_chart(pd.DataFrame({"Yıl": range(1, len(flows)+1), "Nakit Akışı": flows}).set_index("Yıl"))
             
             with st.expander("Şirket Kimlik Kartı"):
