@@ -7,10 +7,10 @@ import plotly.graph_objects as go
 import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Final", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Amınoğlu Yatırım Danışmanlık", page_icon="🚀", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🛡️ Amınoğlu Net Sonuç (v26.0)")
+st.title("🚀 Amınoğlu Ultra Boğa v3.0")
 st.markdown("""
 **Sade ve Güvenli:** Yatırım tavsiyei vermez
 *Ama evi arabayı satıp kredi çekebilirsiniz*
@@ -238,4 +238,5 @@ if st.button("ANALİZ ET", type="primary"):
         else:
             st.error("Veri Yok. Manuel Giriş:")
             # ...
+
 
