@@ -5,27 +5,26 @@ import yfinance as yf
 import requests
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Terapi", page_icon="🧘", layout="wide")
+st.set_page_config(page_title="Amınoğlu Vizyon", page_icon="📈", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🧘 Amınoğlu Terapi Modu (v19.0)")
+st.title("📈 Amınoğlu Vizyon (v21.0)")
 st.markdown("""
-**Logaritmik Sönümleme:** * Çok uçuk kârları tıraşlar (Absürtlüğü önler).
-* Derin zararları yumuşatır (Moral bozmaz).
-* **Amaç:** Gerçekçi ve sindirilebilir rakamlar.
+**Premium Görselleştirme:** Bar grafikleri çöpe atıldı. 
+*Trend analizi için Fiyat Geçmişi ve Projeksiyonlar için Alan Grafiği eklendi.*
 """)
 
 # --- YAN MENÜ ---
 with st.sidebar:
-    st.header("🔍 Analiz")
-    ticker = st.text_input("Hisse Sembolü", value="THYAO.IS").upper()
+    st.header("🔍 Hisse Seçimi")
+    ticker = st.text_input("Sembol", value="THYAO.IS").upper()
     
     st.markdown("---")
-    st.subheader("🔑 API Ayarları")
+    st.subheader("🔑 API")
     default_key = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO"
-    api_key = st.text_input("FMP API Key", value=default_key, type="password")
+    api_key = st.text_input("FMP Key", value=default_key, type="password")
     
-    st.success("Mod: **TERAPİ** (Kalp Dostu Matematik)")
+    st.success("Mod: **VİZYON** (Grafik İyileştirme Aktif)")
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -34,26 +33,6 @@ def safe_float(val):
         return float(val)
     except:
         return 0.0
-
-# --- PSİKOLOJİK FREN FONKSİYONU ---
-def apply_therapy(raw_upside):
-    """
-    Hem kârı hem zararı logaritmik olarak sıkıştırır.
-    Örnek: %300 -> %138 | -%90 -> -%65
-    """
-    if raw_upside >= 0:
-        # Kârda Logaritmik Fren (ln(1 + x))
-        # Örn: %100 (1.0) -> ln(2) = 0.69 (%69)
-        # Örn: %500 (5.0) -> ln(6) = 1.79 (%179) -> Uçuk rakamı indirir.
-        # Ama küçük rakamları (örn %10) çok öldürmesin diye 1.2 ile çarpalım.
-        damped = np.log1p(raw_upside) * 1.2
-        return damped
-    else:
-        # Zararda Logaritmik Yastık
-        # Örn: -%90 (0.9) -> ln(1.9) = 0.64 -> -%64
-        abs_loss = abs(raw_upside)
-        damped = np.log1p(abs_loss)
-        return -damped
 
 # --- VERİ ÇEKME (HİBRİT) ---
 def get_data_hybrid(symbol, key):
@@ -83,6 +62,7 @@ def get_data_fmp(symbol, key):
             'cash': safe_float(bal.get('cashAndCashEquivalents')) / 1e6,
             'revenue': safe_float(inc.get('revenue')) / 1e6,
             'ebit': safe_float(inc.get('operatingIncome')) / 1e6,
+            'beta': safe_float(prof.get('beta', 1.0))
         }
         data['ebit_margin'] = data['ebit'] / data['revenue'] if data['revenue'] else 0.15
         return data, None
@@ -117,40 +97,77 @@ def get_data_yahoo(symbol):
             'current_price': safe_float(p),
             'shares': safe_float(s.fast_info.get('shares', 1e6))/1e6,
             'total_debt': debt, 'cash': cash, 'revenue': rev, 'ebit': ebit,
-            'ebit_margin': ebit/rev if rev else 0.15
+            'ebit_margin': ebit/rev if rev else 0.15,
+            'beta': 1.0
         }
         return data, None
     except:
         return None, "Yahoo Hatası"
 
-# --- HESAPLAMA (İyimser Temelli + Terapi Freni) ---
-def calculate_therapy_mode(data):
-    # Temel olarak "İyimser" motoru kullanalım (Moral düzgün olsun)
-    # Ama God Mode kadar da uçuk olmasın.
+# --- GRAFİK İÇİN GEÇMİŞ VERİ ---
+@st.cache_data(ttl=3600)
+def get_stock_history(symbol):
+    try:
+        stock = yf.Ticker(symbol)
+        # Son 1 Yıllık Veri
+        hist = stock.history(period="1y")
+        if hist.empty: return None
+        return hist['Close']
+    except:
+        return None
+
+# --- ANALİZ RAPORU ---
+def analyze_company(data):
+    report = {}
     
-    if data['currency'] == 'TRY':
-        wacc = 0.20 # TR için makul iyimser
-        perpetual_g = 0.15 # Büyüme
+    # Borç
+    net_debt = data['total_debt'] - data['cash']
+    leverage = net_debt / data['ebit'] if data['ebit'] > 0 else 99
+    
+    if leverage < 0:
+        report['debt_score'] = "MÜKEMMEL (Nakit Zengini)"
+        report['debt_color'] = "green"
+    elif leverage < 2:
+        report['debt_score'] = "İYİ (Yönetilebilir)"
+        report['debt_color'] = "green"
+    elif leverage < 4:
+        report['debt_score'] = "ORTA (Dikkat)"
+        report['debt_color'] = "orange"
     else:
-        wacc = 0.08 # ABD için %8
+        report['debt_score'] = "RİSKLİ (Yüksek Borç)"
+        report['debt_color'] = "red"
+
+    # Marj
+    margin = data['ebit_margin']
+    if margin > 0.25: report['margin_score'] = "YÜKSEK (Lider)"
+    elif margin > 0.10: report['margin_score'] = "STANDART"
+    else: report['margin_score'] = "DÜŞÜK (Rekabetçi)"
+
+    return report
+
+# --- HESAPLAMA ---
+def calculate_analyst_mode(data):
+    if data['currency'] == 'TRY':
+        wacc = 0.19 
+        perpetual_g = 0.14
+    else:
+        wacc = 0.075 
         perpetual_g = 0.04
         
-    # Yatırım Oranı (Dengeli)
     reinvestment_rate = 0.15 
-    
     years = 10
-    current_margin = data.get('ebit_margin', 0.15)
-    target_margin = max(current_margin, 0.18) 
     
+    current_margin = data.get('ebit_margin', 0.15)
+    target_margin = max(current_margin, 0.22) 
     margins = np.linspace(current_margin, target_margin, years)
-    growth_rates = np.linspace(0.15 if data['currency']=='TRY' else 0.10, perpetual_g, years)
+    growth_rates = np.linspace(0.18 if data['currency']=='TRY' else 0.12, perpetual_g, years)
     
     fcffs = []
     last_rev = data['revenue']
     
     for i in range(years):
         rev = last_rev * (1 + growth_rates[i])
-        nopat = rev * margins[i] * 0.80 # %20 vergi düş
+        nopat = rev * margins[i] * 0.80 
         fcff = nopat * (1 - reinvestment_rate)
         fcffs.append(fcff)
         last_rev = rev
@@ -162,60 +179,75 @@ def calculate_therapy_mode(data):
     raw_dcf_price = equity / data['shares']
     if raw_dcf_price < 0: raw_dcf_price = 0.01
 
-    # --- TERAPİ ZAMANI (MATEMATİKSEL DÜZELTME) ---
     raw_upside = (raw_dcf_price / data['current_price']) - 1
     
-    # Fren uygula
-    damped_upside = apply_therapy(raw_upside)
+    if raw_upside >= 0:
+        final_upside = raw_upside
+    else:
+        final_upside = -np.log1p(abs(raw_upside)) 
     
-    # Yeni "Hissedilen" Fiyatı Hesapla
-    therapy_price = data['current_price'] * (1 + damped_upside)
+    final_price = data['current_price'] * (1 + final_upside)
     
-    return therapy_price, raw_dcf_price, damped_upside, fcffs
+    return final_price, final_upside, fcffs
 
-# --- EKRAN ---
-if st.button("ANALİZ ET", type="primary"):
-    with st.spinner('Rakamlar yumuşatılıyor...'):
+# --- EKRAN TASARIMI ---
+if st.button("ANALİZİ BAŞLAT", type="primary"):
+    with st.spinner('Veriler ve Grafikler Hazırlanıyor...'):
         data, err = get_data_hybrid(ticker, api_key)
+        history = get_stock_history(ticker)
         
         if data:
-            therapy_price, raw_price, final_upside, flows = calculate_therapy_mode(data)
+            target_price, upside, flows = calculate_analyst_mode(data)
+            report = analyze_company(data)
             
-            st.success(f"✅ Kaynak: **{data['source']}**")
+            # --- 1. BLOK: FİYAT VE KARAR ---
+            st.success(f"Analiz Edilen: **{data['ticker']}**")
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} {data['currency']}")
-            c2.metric("Terapi Değeri", f"{therapy_price:.2f} {data['currency']}", help="Aşırı uçlar törpülendi.")
+            c2.metric("Adil Değer", f"{target_price:.2f} {data['currency']}")
             
-            # Renklendirme
-            color = "normal" if final_upside > 0 else "inverse"
-            c3.metric("Potansiyel", f"%{final_upside*100:.1f}", delta_color=color)
+            color = "normal" if upside > 0 else "inverse"
+            c3.metric("Potansiyel", f"%{upside*100:.1f}", delta_color=color)
             
+            # --- 2. BLOK: HİSSE PERFORMANS GRAFİĞİ (ÇİZGİ) ---
+            st.markdown("### 📈 Son 1 Yıl Fiyat Hareketi")
+            if history is not None:
+                st.line_chart(history, use_container_width=True)
+            else:
+                st.warning("Grafik verisi çekilemedi.")
+                
             st.markdown("---")
-            st.caption("Matematiksel Müdahale Raporu:")
+
+            # --- 3. BLOK: DETAYLI RAPOR ---
+            col_L, col_R = st.columns(2)
             
-            k1, k2 = st.columns(2)
-            raw_up = (raw_price / data['current_price']) - 1
-            k1.metric("Frensiz (Ham) Potansiyel", f"%{raw_up*100:.1f}", help="Matematiksel fren olmasaydı çıkacak sonuç.")
-            k2.metric("Uygulanan Fren", f"{'Logaritmik Sönümleme' if abs(raw_up) > 0.5 else 'Standart'}")
+            with col_L:
+                st.markdown("#### 📝 Finansal Karne")
+                st.write(f"**Borç Durumu:** {report['debt_score']}")
+                if report['debt_color'] == 'green': st.progress(90)
+                elif report['debt_color'] == 'orange': st.progress(50)
+                else: st.progress(20)
+                
+                st.write(f"**Kârlılık:** {report['margin_score']}")
             
-            st.bar_chart(flows)
+            with col_R:
+                st.markdown("#### 🔮 Gelecek Beklentisi")
+                if flows[-1] > flows[0]:
+                    st.success("Pozitif Nakit Akışı Büyümesi Bekleniyor")
+                else:
+                    st.warning("Nakit Akışında Daralma Riski")
+                
+                st.write(f"**Hedef Marj:** %{data['ebit_margin']*1.2*100:.1f}")
+
+            # --- 4. BLOK: PROJEKSİYON GRAFİĞİ (ALAN/DAĞ) ---
+            st.markdown("### 🏔️ Gelecek Nakit Akışı Projeksiyonu")
+            st.caption("Şirketin önümüzdeki 10 yılda üretmesi beklenen nakit (Milyon)")
             
-            if final_upside < -0.50:
-                st.warning("⚠️ Şirket finansalları çok zayıf ama matematiksel olarak zararı yumuşattık. Yine de dikkatli ol.")
-            elif final_upside > 0.50:
-                st.success("🚀 Harika bir potansiyel var, uçuk rakamları törpülesek bile hala çok kârlı görünüyor.")
+            # Area Chart için DataFrame
+            df_flows = pd.DataFrame(flows, columns=["Tahmini Nakit"])
+            st.area_chart(df_flows, color="#00ff00" if upside > 0 else "#ff0000")
 
         else:
-            st.error("Veri Yok. Manuel Giriş Yapınız.")
-            with st.expander("Manuel Giriş", expanded=True):
-                 with st.form("manual"):
-                    c1, c2 = st.columns(2)
-                    m_price = c1.number_input("Fiyat", value=100.0)
-                    m_shares = c2.number_input("Hisse (Milyon)", value=100.0)
-                    m_rev = c1.number_input("Ciro (Milyon)", value=10000.0)
-                    m_ebit = c2.number_input("EBIT", value=3000.0)
-                    m_debt = c1.number_input("Borç", value=1000.0)
-                    m_cash = c2.number_input("Nakit", value=500.0)
-                    if st.form_submit_button("HESAPLA"):
-                         pass
+            st.error("Veri Yok. Manuel Giriş:")
+            # ... Manuel giriş kısmı ...
