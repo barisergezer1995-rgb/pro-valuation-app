@@ -3,8 +3,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
-import requests
-import requests_cache # <-- Yeni silahımız bu
+import time
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Amınoğlu Değerleme", page_icon="🦄", layout="wide")
@@ -38,70 +37,74 @@ with st.sidebar:
         sector_multiple = 5.0
 
 # --- FONKSİYONLAR ---
-@st.cache_resource # Resource olarak cache'liyoruz ki session hep açık kalsın
-def get_session():
-    # Yahoo'yu kandırmak için güçlü bir session hazırlıyoruz
-    session = requests_cache.CachedSession('yfinance.cache')
-    session.headers['User-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-    return session
-
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_data(symbol):
-    # Özel session'ı çağırıyoruz
-    session = get_session()
+    # Israrcı Mod: 3 Kere Dene
+    max_retries = 3
+    delay = 2
     
-    # yfinance 0.2.40 sürümü bu session parametresini sorunsuz kabul eder
-    stock = yf.Ticker(symbol, session=session)
-    
-    try:
-        # Önce basit bir veri çekmeyi deneyelim
-        info = stock.info
-    except Exception as e:
-        return None, "Yahoo Bağlantı Hatası (Rate Limit). Lütfen 1-2 dakika bekleyip tekrar deneyin."
+    for attempt in range(max_retries):
+        try:
+            stock = yf.Ticker(symbol)
+            
+            # 1. Info Çekmeyi Dene
+            info = stock.info
+            
+            if 'currentPrice' not in info:
+                # Veri yoksa hata fırlat ki 'except' bloğuna düşsün
+                raise ValueError("Fiyat verisi eksik")
+            
+            # 2. Tabloları Çek
+            bs = stock.balance_sheet
+            is_stmt = stock.financials
+            
+            if bs.empty or is_stmt.empty:
+                raise ValueError("Tablolar boş")
+            
+            # --- Eğer buraya geldiyse her şey yolunda demektir ---
+            
+            # YAŞ HESAPLAMA
+            first_trade_ts = info.get('firstTradeDateEpochUtc', None)
+            if first_trade_ts:
+                ipo_year = datetime.fromtimestamp(first_trade_ts).year
+                current_year = datetime.now().year
+                company_age = current_year - ipo_year
+            else:
+                company_age = 5
+                
+            # Veri Hazırlığı
+            data = {
+                'ticker': symbol,
+                'long_name': info.get('longName', symbol),
+                'currency': info.get('currency', 'USD'),
+                'current_price': info.get('currentPrice', 0),
+                'shares': info.get('sharesOutstanding', 0) / 1e6,
+                'beta': info.get('beta', 1.0),
+                'total_debt': bs.iloc[:, 0].get('Total Debt', 0) / 1e6 if not bs.empty else 0,
+                'cash': bs.iloc[:, 0].get('Cash And Cash Equivalents', 0) / 1e6 if not bs.empty else 0,
+                'revenue': is_stmt.iloc[:, 0].get('Total Revenue', 0) / 1e6 if not is_stmt.empty else 0,
+                'ebit': is_stmt.iloc[:, 0].get('EBIT', 0) / 1e6 if not is_stmt.empty else 0,
+                'growth_start': info.get('revenueGrowth', 0.15),
+                'company_age': company_age
+            }
+            
+            # Marjlar
+            data['ebit_margin'] = data['ebit'] / data['revenue'] if data['revenue'] else 0.2
+            
+            pretax = is_stmt.iloc[:, 0].get('Pretax Income', 0) if not is_stmt.empty else 0
+            tax = is_stmt.iloc[:, 0].get('Tax Provision', 0) if not is_stmt.empty else 0
+            data['tax_rate'] = tax / pretax if pretax else 0.21
+            
+            return data, None
 
-    if not info or 'currentPrice' not in info:
-        return None, "Veri bulunamadı. Sembolü kontrol edin veya Yahoo geçici engel koymuş olabilir."
-        
-    bs = stock.balance_sheet
-    is_stmt = stock.financials
-    
-    if bs.empty or is_stmt.empty:
-        return None, "Finansal tablolar eksik."
-        
-    # --- YAŞ HESAPLAMA ---
-    first_trade_ts = info.get('firstTradeDateEpochUtc', None)
-    
-    if first_trade_ts:
-        ipo_year = datetime.fromtimestamp(first_trade_ts).year
-        current_year = datetime.now().year
-        company_age = current_year - ipo_year
-    else:
-        company_age = 5
-        
-    # Veri Hazırlığı
-    data = {
-        'ticker': symbol,
-        'long_name': info.get('longName', symbol),
-        'currency': info.get('currency', 'USD'),
-        'current_price': info.get('currentPrice', 0),
-        'shares': info.get('sharesOutstanding', 0) / 1e6,
-        'beta': info.get('beta', 1.0),
-        'total_debt': bs.iloc[:, 0].get('Total Debt', 0) / 1e6 if not bs.empty else 0,
-        'cash': bs.iloc[:, 0].get('Cash And Cash Equivalents', 0) / 1e6 if not bs.empty else 0,
-        'revenue': is_stmt.iloc[:, 0].get('Total Revenue', 0) / 1e6 if not is_stmt.empty else 0,
-        'ebit': is_stmt.iloc[:, 0].get('EBIT', 0) / 1e6 if not is_stmt.empty else 0,
-        'growth_start': info.get('revenueGrowth', 0.15),
-        'company_age': company_age
-    }
-    
-    # Marjlar
-    data['ebit_margin'] = data['ebit'] / data['revenue'] if data['revenue'] else 0.2
-    
-    pretax = is_stmt.iloc[:, 0].get('Pretax Income', 0) if not is_stmt.empty else 0
-    tax = is_stmt.iloc[:, 0].get('Tax Provision', 0) if not is_stmt.empty else 0
-    data['tax_rate'] = tax / pretax if pretax else 0.21
-    
-    return data, None
+        except Exception as e:
+            # Hata aldıysak bekle ve tekrar dene
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                continue
+            else:
+                # Son denemede de hata verdiyse
+                return None, f"Yahoo Bağlantı Hatası (Sunucu yoğun): {str(e)}"
 
 def calculate_dcf(data, years, g, manual_wacc=None, multiple=None):
     # 1. WACC
@@ -155,11 +158,12 @@ def calculate_dcf(data, years, g, manual_wacc=None, multiple=None):
 
 # --- ANA EKRAN MANTIĞI ---
 if st.button("Analizi Başlat", type="primary"):
-    with st.spinner('Veriler analiz ediliyor...'):
+    with st.spinner('Veriler analiz ediliyor... (Sunucu yoğunsa 3-4 saniye sürebilir)'):
         data, error = get_data(ticker)
         
         if error:
             st.error(error)
+            st.info("💡 İpucu: Çok fazla deneme yapıldıysa 1 dakika bekleyin veya farklı bir hisse deneyin.")
         else:
             is_old_company = data['company_age'] > 15
             is_loss_making = data['ebit'] < 0
