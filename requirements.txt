@@ -1,5 +1,6 @@
 streamlit
-git+https://github.com/ranaroussi/yfinance.git
+yfinance>=0.2.54
 pandas
 numpy
 requests
+lxml
