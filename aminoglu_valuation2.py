@@ -3,12 +3,13 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
+import requests # <-- Hata çözümü için bu kütüphaneyi ekledik
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Pro DCF & Startup Değerleme", page_icon="🦄", layout="wide")
+st.set_page_config(page_title="Amınoğlu Değerleme", page_icon="🦄", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🚀 Pro Değerleme Motoru (v2.0)")
+st.title("🚀 Amınoğlu Değerleme Motoru (v2.0)")
 st.markdown("İskontolanmış Nakit Akışı (DCF) ve Akıllı Startup Analizi")
 
 # --- YAN MENÜ ---
@@ -25,7 +26,7 @@ with st.sidebar:
         wacc_input = st.slider("WACC Oranı (%)", 5.0, 25.0, 10.0, 0.5) / 100
     else:
         wacc_input = None
-
+    
     st.markdown("---")
     st.subheader("🦄 Değerleme Modu")
     
@@ -39,11 +40,22 @@ with st.sidebar:
 # --- FONKSİYONLAR ---
 @st.cache_data(ttl=3600)
 def get_data(symbol):
-    stock = yf.Ticker(symbol)
-    info = stock.info
+    # --- YENİ EKLENEN KISIM: KİMLİK GİZLEME (USER-AGENT) ---
+    # Bu kısım Yahoo'nun "Rate Limit" hatasını aşmak için gereklidir.
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    })
     
+    stock = yf.Ticker(symbol, session=session)
+    
+    try:
+        info = stock.info
+    except Exception as e:
+        return None, f"Yahoo Finance bağlantı hatası: {str(e)}"
+
     if 'currentPrice' not in info:
-        return None, "Veri bulunamadı. Sembolü kontrol edin."
+        return None, "Veri bulunamadı. Sembolü kontrol edin veya Yahoo geçici engel koymuş olabilir."
         
     bs = stock.balance_sheet
     is_stmt = stock.financials
@@ -51,8 +63,7 @@ def get_data(symbol):
     if bs.empty or is_stmt.empty:
         return None, "Finansal tablolar eksik."
         
-    # --- YENİ: YAŞ HESAPLAMA ---
-    # firstTradeDateEpochUtc: Borsada ilk işlem gördüğü saniye
+    # --- YAŞ HESAPLAMA ---
     first_trade_ts = info.get('firstTradeDateEpochUtc', None)
     
     if first_trade_ts:
@@ -60,8 +71,7 @@ def get_data(symbol):
         current_year = datetime.now().year
         company_age = current_year - ipo_year
     else:
-        # Veri yoksa varsayılan olarak eski kabul etmeyelim ama uyaralım
-        company_age = 5 
+        company_age = 5
         
     # Veri Hazırlığı
     data = {
@@ -71,19 +81,19 @@ def get_data(symbol):
         'current_price': info.get('currentPrice', 0),
         'shares': info.get('sharesOutstanding', 0) / 1e6,
         'beta': info.get('beta', 1.0),
-        'total_debt': bs.iloc[:, 0].get('Total Debt', 0) / 1e6,
-        'cash': bs.iloc[:, 0].get('Cash And Cash Equivalents', 0) / 1e6,
-        'revenue': is_stmt.iloc[:, 0].get('Total Revenue', 0) / 1e6,
-        'ebit': is_stmt.iloc[:, 0].get('EBIT', 0) / 1e6,
+        'total_debt': bs.iloc[:, 0].get('Total Debt', 0) / 1e6 if not bs.empty else 0,
+        'cash': bs.iloc[:, 0].get('Cash And Cash Equivalents', 0) / 1e6 if not bs.empty else 0,
+        'revenue': is_stmt.iloc[:, 0].get('Total Revenue', 0) / 1e6 if not is_stmt.empty else 0,
+        'ebit': is_stmt.iloc[:, 0].get('EBIT', 0) / 1e6 if not is_stmt.empty else 0,
         'growth_start': info.get('revenueGrowth', 0.15),
-        'company_age': company_age # Yaşı dataya ekledik
+        'company_age': company_age
     }
     
     # Marjlar
     data['ebit_margin'] = data['ebit'] / data['revenue'] if data['revenue'] else 0.2
     
-    pretax = is_stmt.iloc[:, 0].get('Pretax Income', 0)
-    tax = is_stmt.iloc[:, 0].get('Tax Provision', 0)
+    pretax = is_stmt.iloc[:, 0].get('Pretax Income', 0) if not is_stmt.empty else 0
+    tax = is_stmt.iloc[:, 0].get('Tax Provision', 0) if not is_stmt.empty else 0
     data['tax_rate'] = tax / pretax if pretax else 0.21
     
     return data, None
@@ -98,8 +108,8 @@ def calculate_dcf(data, years, g, manual_wacc=None, multiple=None):
     total_val = market_cap + data['total_debt']
     
     cost_debt = 0.045
-    w_e = market_cap / total_val
-    w_d = data['total_debt'] / total_val
+    w_e = market_cap / total_val if total_val > 0 else 1
+    w_d = data['total_debt'] / total_val if total_val > 0 else 0
     
     wacc = (w_e * cost_equity) + (w_d * cost_debt * (1 - data['tax_rate']))
     if manual_wacc: wacc = manual_wacc
@@ -115,13 +125,15 @@ def calculate_dcf(data, years, g, manual_wacc=None, multiple=None):
         # Basit FCFF Tahmini
         ebit = rev * data['ebit_margin']
         nopat = ebit * (1 - data['tax_rate'])
-        reinvestment = nopat * 0.25 
+        reinvestment = nopat * 0.25
+        
         fcff = nopat - reinvestment
         fcffs.append(fcff)
         last_rev = rev
 
     discount_factors = [1 / ((1 + wacc) ** (y - 0.5)) for y in range(1, years+1)]
     pv_fcff = np.sum(np.array(fcffs) * np.array(discount_factors))
+
     terminal_val = (fcffs[-1] * (1 + g)) / (wacc - g)
     pv_terminal = terminal_val / ((1 + wacc) ** years)
     
@@ -138,7 +150,6 @@ def calculate_dcf(data, years, g, manual_wacc=None, multiple=None):
     return dcf_price, wacc, fcffs, multiple_price
 
 # --- ANA EKRAN MANTIĞI ---
-
 if st.button("Analizi Başlat", type="primary"):
     with st.spinner('Veriler analiz ediliyor...'):
         data, error = get_data(ticker)
@@ -147,7 +158,6 @@ if st.button("Analizi Başlat", type="primary"):
             st.error(error)
         else:
             # --- AKILLI MOD SEÇİMİ ---
-            # Şirket 15 yaşından büyükse Startup modu OTOMATİK KAPANIR (User zorlamadıkça)
             is_old_company = data['company_age'] > 15
             is_loss_making = data['ebit'] < 0
             
@@ -157,25 +167,22 @@ if st.button("Analizi Başlat", type="primary"):
             if force_startup:
                 use_startup_mode = True
             elif is_loss_making and not is_old_company:
-                # Genç ve Zarar ediyor -> Startup Modu Uygun
                 use_startup_mode = True
             
             # Hesaplama
             dcf_val, used_wacc, flows, mult_val = calculate_dcf(
-                data, forecast_years, perpetual_growth, wacc_input, 
-                sector_multiple if use_startup_mode else None
+                data, forecast_years, perpetual_growth, wacc_input,
+                 sector_multiple if use_startup_mode else None
             )
             
             # --- SONUÇLARI GÖSTER ---
-            
-            # Uyarı Bandı (Eğer yaşlıysa)
             if is_old_company and is_loss_making:
-                st.warning(f"⚠️ **UYARI:** Bu şirket {data['company_age']} yıldır piyasada ama zarar ediyor. Bu bir startup değil, 'Zor Durumda (Distressed)' şirket olabilir. DCF negatif çıkabilir.")
+                st.warning(f"⚠️ **UYARI:** Bu şirket {data['company_age']} yıldır piyasada ama zarar ediyor. Bu bir startup değil, 'Zor Durumda' şirket olabilir.")
             elif is_old_company:
                 st.info(f"ℹ️ Şirket {data['company_age']} yaşında. Olgun bir şirket olduğu için Standart DCF kullanılıyor.")
             elif use_startup_mode:
-                st.success(f"🦄 **STARTUP MODU AKTİF:** Şirket genç ({data['company_age']} yaşında) veya büyüme odaklı olduğu için Ciro Çarpanı da hesaplandı.")
-
+                st.success(f"🦄 **STARTUP MODU AKTİF:** Şirket genç ({data['company_age']} yaşında) veya büyüme odaklı.")
+            
             col1, col2, col3 = st.columns(3)
             col1.metric("Güncel Fiyat", f"{data['current_price']:.2f} {data['currency']}")
             
@@ -187,9 +194,12 @@ if st.button("Analizi Başlat", type="primary"):
                 final_val = dcf_val
                 label = "Adil Değer (DCF)"
                 col2.metric(label, f"{final_val:.2f} {data['currency']}")
-                
+            
             upside = (final_val / data['current_price']) - 1
-            col3.metric("Potansiyel", f"%{upside*100:.2f}")
+            
+            # Renkli Potansiyel Gösterimi
+            delta_color = "normal" if upside > 0 else "inverse"
+            col3.metric("Potansiyel", f"%{upside*100:.2f}", delta=f"{upside*100:.1f}%", delta_color=delta_color)
 
             # Grafik
             st.bar_chart(pd.DataFrame({"Yıl": range(1, len(flows)+1), "Nakit Akışı": flows}).set_index("Yıl"))
