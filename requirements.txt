@@ -1,6 +1,5 @@
 streamlit
-yfinance==0.2.40
+git+https://github.com/ranaroussi/yfinance.git
 pandas
 numpy
 requests
-requests-cache
