@@ -3,15 +3,17 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 import requests
+import plotly.graph_objects as go
+import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Vizyon", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Amınoğlu Çelik Yelek", page_icon="🛡️", layout="wide")
 
 # --- BAŞLIK ---
-st.title("📈 Amınoğlu Vizyon Ultra Boğa (v21.0)")
+st.title("🛡️ Amınoğlu Çelik Yelek Modu (v24.0)")
 st.markdown("""
-**Evi Arabayı Satın
-*Piyasaya döşemeye geliyoruz*
+**Maksimum Güvenlik:** Potansiyeller iyice törpülendi.
+*Ham potansiyel %100 olsa bile ekranda %38 yazar. Sürprize yer yok.*
 """)
 
 # --- YAN MENÜ ---
@@ -24,7 +26,7 @@ with st.sidebar:
     default_key = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO"
     api_key = st.text_input("FMP Key", value=default_key, type="password")
     
-    st.success("Mod: **VİZYON** (Grafik İyileştirme Aktif)")
+    st.info("Mod: **ÇELİK YELEK** (Aşırı Muhafazakar)")
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -34,7 +36,23 @@ def safe_float(val):
     except:
         return 0.0
 
-# --- VERİ ÇEKME (HİBRİT) ---
+# --- ÇELİK YELEK FRENİ (x0.55 Katsayısı) ---
+def apply_steel_brake(raw_upside):
+    """
+    Katsayıyı 0.55'e çektik.
+    Matematik: ln(1 + 1.0) * 0.55 = 0.693 * 0.55 = 0.38
+    Yani %100 potansiyeli %38'e indirir.
+    """
+    abs_val = abs(raw_upside)
+    # Logaritmik sönümleme + %45 ekstra kesinti
+    damped = np.log1p(abs_val) * 0.55 
+    
+    if raw_upside >= 0:
+        return damped
+    else:
+        return -damped
+
+# --- VERİ ÇEKME ---
 def get_data_hybrid(symbol, key):
     if ".IS" in symbol: return get_data_yahoo(symbol)
     data, err = get_data_fmp(symbol, key)
@@ -104,151 +122,116 @@ def get_data_yahoo(symbol):
     except:
         return None, "Yahoo Hatası"
 
-# --- GRAFİK İÇİN GEÇMİŞ VERİ ---
+# --- GEÇMİŞ VERİ ---
 @st.cache_data(ttl=3600)
 def get_stock_history(symbol):
     try:
         stock = yf.Ticker(symbol)
-        # Son 1 Yıllık Veri
         hist = stock.history(period="1y")
-        if hist.empty: return None
-        return hist['Close']
+        return hist['Close'] if not hist.empty else None
     except:
         return None
 
-# --- ANALİZ RAPORU ---
-def analyze_company(data):
-    report = {}
-    
-    # Borç
-    net_debt = data['total_debt'] - data['cash']
-    leverage = net_debt / data['ebit'] if data['ebit'] > 0 else 99
-    
-    if leverage < 0:
-        report['debt_score'] = "MÜKEMMEL (Nakit Zengini)"
-        report['debt_color'] = "green"
-    elif leverage < 2:
-        report['debt_score'] = "İYİ (Yönetilebilir)"
-        report['debt_color'] = "green"
-    elif leverage < 4:
-        report['debt_score'] = "ORTA (Dikkat)"
-        report['debt_color'] = "orange"
-    else:
-        report['debt_score'] = "RİSKLİ (Yüksek Borç)"
-        report['debt_color'] = "red"
-
-    # Marj
-    margin = data['ebit_margin']
-    if margin > 0.25: report['margin_score'] = "YÜKSEK (Lider)"
-    elif margin > 0.10: report['margin_score'] = "STANDART"
-    else: report['margin_score'] = "DÜŞÜK (Rekabetçi)"
-
-    return report
-
-# --- HESAPLAMA ---
-def calculate_analyst_mode(data):
+# --- HESAPLAMA MOTORU ---
+def calculate_steel_vest(data):
+    # Parametreler (Makul Ayar)
     if data['currency'] == 'TRY':
         wacc = 0.19 
-        perpetual_g = 0.14
+        g = 0.14
+        margin_factor = 1.1
     else:
         wacc = 0.075 
-        perpetual_g = 0.04
-        
-    reinvestment_rate = 0.15 
+        g = 0.04
+        margin_factor = 1.1
+    
+    reinvestment_rate = 0.15
     years = 10
     
+    # Projeksiyon
     current_margin = data.get('ebit_margin', 0.15)
-    target_margin = max(current_margin, 0.22) 
+    target_margin = max(current_margin, current_margin * margin_factor)
+    
     margins = np.linspace(current_margin, target_margin, years)
-    growth_rates = np.linspace(0.18 if data['currency']=='TRY' else 0.12, perpetual_g, years)
+    growth_rates = np.linspace(g + 0.05, g, years)
     
     fcffs = []
     last_rev = data['revenue']
     
     for i in range(years):
         rev = last_rev * (1 + growth_rates[i])
-        nopat = rev * margins[i] * 0.80 
+        nopat = rev * margins[i] * 0.80 # Vergi
         fcff = nopat * (1 - reinvestment_rate)
         fcffs.append(fcff)
         last_rev = rev
         
-    term_val = fcffs[-1] * (1+perpetual_g) / (wacc - perpetual_g)
+    term_val = fcffs[-1] * (1+g) / (wacc - g)
     pv = np.sum([f / ((1+wacc)**(i+1)) for i, f in enumerate(fcffs)]) + (term_val / ((1+wacc)**years))
     
     equity = pv - data['total_debt'] + data['cash']
-    raw_dcf_price = equity / data['shares']
-    if raw_dcf_price < 0: raw_dcf_price = 0.01
+    raw_price = equity / data['shares']
+    if raw_price < 0: raw_price = 0.01
 
-    raw_upside = (raw_dcf_price / data['current_price']) - 1
+    # --- ÇELİK YELEK FRENİ ---
+    raw_upside = (raw_price / data['current_price']) - 1
     
-    if raw_upside >= 0:
-        final_upside = raw_upside
-    else:
-        final_upside = -np.log1p(abs(raw_upside)) 
+    # Yeni 0.55 Katsayılı Freni Uygula
+    braked_upside = apply_steel_brake(raw_upside)
     
-    final_price = data['current_price'] * (1 + final_upside)
+    # Yeni Fiyat
+    steel_price = data['current_price'] * (1 + braked_upside)
     
-    return final_price, final_upside, fcffs
+    return steel_price, braked_upside, fcffs, raw_upside
 
-# --- EKRAN TASARIMI ---
-if st.button("ANALİZİ BAŞLAT", type="primary"):
-    with st.spinner('Veriler ve Grafikler Hazırlanıyor...'):
+# --- EKRAN ---
+if st.button("HEDEFİ BELİRLE", type="primary"):
+    with st.spinner('Zırhlı hesaplama yapılıyor...'):
         data, err = get_data_hybrid(ticker, api_key)
         history = get_stock_history(ticker)
         
         if data:
-            target_price, upside, flows = calculate_analyst_mode(data)
-            report = analyze_company(data)
+            steel_price, upside, flows, raw_up = calculate_steel_vest(data)
             
-            # --- 1. BLOK: FİYAT VE KARAR ---
-            st.success(f"Analiz Edilen: **{data['ticker']}**")
+            # --- 1. ANA KART ---
+            st.markdown(f"### 🛡️ {data['ticker']} Çelik Yelek Raporu")
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} {data['currency']}")
-            c2.metric("Adil Değer", f"{target_price:.2f} {data['currency']}")
             
+            # Hedef Fiyat
+            c2.metric("🛡️ Zırhlı Hedef", f"{steel_price:.2f} {data['currency']}")
+            
+            # Renkli Potansiyel
             color = "normal" if upside > 0 else "inverse"
-            c3.metric("Potansiyel", f"%{upside*100:.1f}", delta_color=color)
+            c3.metric("Potansiyel (Sıkıştırılmış)", f"%{upside*100:.1f}", f"Ham: %{raw_up*100:.1f}", delta_color=color)
             
-            # --- 2. BLOK: HİSSE PERFORMANS GRAFİĞİ (ÇİZGİ) ---
-            st.markdown("### 📈 Son 1 Yıl Fiyat Hareketi")
-            if history is not None:
-                st.line_chart(history, use_container_width=True)
-            else:
-                st.warning("Grafik verisi çekilemedi.")
-                
             st.markdown("---")
 
-            # --- 3. BLOK: DETAYLI RAPOR ---
-            col_L, col_R = st.columns(2)
+            # --- 2. PROFESYONEL GRAFİK (PLOTLY) ---
+            fig = go.Figure()
             
-            with col_L:
-                st.markdown("#### 📝 Finansal Karne")
-                st.write(f"**Borç Durumu:** {report['debt_score']}")
-                if report['debt_color'] == 'green': st.progress(90)
-                elif report['debt_color'] == 'orange': st.progress(50)
-                else: st.progress(20)
-                
-                st.write(f"**Kârlılık:** {report['margin_score']}")
+            # Geçmiş Fiyat
+            if history is not None:
+                fig.add_trace(go.Scatter(x=history.index, y=history.values, mode='lines', name='Piyasa', line=dict(color='#888', width=2)))
             
-            with col_R:
-                st.markdown("#### 🔮 Gelecek Beklentisi")
-                if flows[-1] > flows[0]:
-                    st.success("Pozitif Nakit Akışı Büyümesi Bekleniyor")
-                else:
-                    st.warning("Nakit Akışında Daralma Riski")
-                
-                st.write(f"**Hedef Marj:** %{data['ebit_margin']*1.2*100:.1f}")
+            # Hedef Çizgisi
+            fig.add_hline(y=steel_price, line_dash="solid", line_color="#32CD32", line_width=3, annotation_text="GÜVENLİ HEDEF", annotation_font_size=14, annotation_font_color="#32CD32")
 
-            # --- 4. BLOK: PROJEKSİYON GRAFİĞİ (ALAN/DAĞ) ---
-            st.markdown("### 🏔️ Gelecek Nakit Akışı Projeksiyonu")
-            st.caption("Şirketin önümüzdeki 10 yılda üretmesi beklenen nakit (Milyon)")
+            fig.update_layout(
+                title="Fiyat Performansı ve Güvenli Hedef", 
+                height=500,
+                xaxis_title="Tarih",
+                yaxis_title="Fiyat"
+            )
+            st.plotly_chart(fig, use_container_width=True)
             
-            # Area Chart için DataFrame
-            df_flows = pd.DataFrame(flows, columns=["Tahmini Nakit"])
-            st.area_chart(df_flows, color="#00ff00" if upside > 0 else "#ff0000")
+            # --- 3. NAKİT AKIŞI ---
+            st.markdown("### 🏔️ Nakit Akışı Projeksiyonu")
+            df_flow = pd.DataFrame(flows, columns=["Projeksiyon"])
+            st.area_chart(df_flow, color="#32CD32" if upside > 0 else "#FF4B4B")
+            
+            # --- 4. AÇIKLAMA ---
+            st.info(f"ℹ️ **Sistem Notu:** Ham hesaplamada potansiyel **%{raw_up*100:.1f}** idi. Çelik Yelek algoritması bunu **%{upside*100:.1f}** seviyesine indirdi. Bu sonuç yeşilse, hisse gerçekten ucuzdur.")
 
         else:
             st.error("Veri Yok. Manuel Giriş:")
-            # ... Manuel giriş kısmı ...
-
+            # ...
