@@ -8,10 +8,10 @@ import requests
 st.set_page_config(page_title="Amınoğlu Vizyon", page_icon="📈", layout="wide")
 
 # --- BAŞLIK ---
-st.title("📈 Amınoğlu Vizyon (v21.0)")
+st.title("📈 Amınoğlu Vizyon Ultra Boğa (v21.0)")
 st.markdown("""
-**Premium Görselleştirme:** Bar grafikleri çöpe atıldı. 
-*Trend analizi için Fiyat Geçmişi ve Projeksiyonlar için Alan Grafiği eklendi.*
+**Evi Arabayı Satın
+*Piyasaya döşemeye geliyoruz*
 """)
 
 # --- YAN MENÜ ---
@@ -251,3 +251,4 @@ if st.button("ANALİZİ BAŞLAT", type="primary"):
         else:
             st.error("Veri Yok. Manuel Giriş:")
             # ... Manuel giriş kısmı ...
+
