@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
-import requests # <-- Hata çözümü için bu kütüphaneyi ekledik
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Amınoğlu Değerleme", page_icon="🦄", layout="wide")
@@ -40,19 +39,14 @@ with st.sidebar:
 # --- FONKSİYONLAR ---
 @st.cache_data(ttl=3600)
 def get_data(symbol):
-    # --- YENİ EKLENEN KISIM: KİMLİK GİZLEME (USER-AGENT) ---
-    # Bu kısım Yahoo'nun "Rate Limit" hatasını aşmak için gereklidir.
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-    })
-    
-    stock = yf.Ticker(symbol, session=session)
+    # DÜZELTME: Session kısmını kaldırdık çünkü yeni yfinance sürümü bunu kendi yapıyor.
+    stock = yf.Ticker(symbol)
     
     try:
         info = stock.info
     except Exception as e:
-        return None, f"Yahoo Finance bağlantı hatası: {str(e)}"
+        # Eğer yine de hata alırsak kullanıcıya temiz bilgi verelim
+        return None, f"Yahoo Finance bağlantı hatası: {str(e)}. (Lütfen sayfayı yenileyip tekrar deneyin)"
 
     if 'currentPrice' not in info:
         return None, "Veri bulunamadı. Sembolü kontrol edin veya Yahoo geçici engel koymuş olabilir."
