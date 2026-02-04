@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(page_title="Amınoğlu Değerleme", page_icon="🦄", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🚀 Amınoğlu Değerleme Motoru (v3.0 - Stabil)")
+st.title("🚀 Amınoğlu Değerleme (v3.0 - Stabil)")
 st.markdown("İskontolanmış Nakit Akışı (DCF) ve Akıllı Startup Analizi")
 
 # --- YAN MENÜ ---
@@ -265,3 +265,4 @@ if st.button("Analizi Başlat", type="primary"):
             st.info(f"ℹ️ **Analiz Notu:** Hesaplamada WACC: %{used_wacc*100:.1f} kullanıldı.")
             if use_startup:
                 st.success("Bu şirket zarar ettiği veya başlangıç aşamasında olduğu için Ciro Çarpanı ile değerlendi.")
+
