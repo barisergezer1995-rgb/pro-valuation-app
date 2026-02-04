@@ -12,8 +12,8 @@ st.set_page_config(page_title="Amınoğlu Final", page_icon="🛡️", layout="w
 # --- BAŞLIK ---
 st.title("🛡️ Amınoğlu Net Sonuç (v26.0)")
 st.markdown("""
-**Sade ve Güvenli:** Sadece zırhlı hedefi görürsünüz.
-*Arkada dönen matematiksel işlemler (frenleme/sönümleme) gizlenmiştir.*
+**Sade ve Güvenli:** Yatırım tavsiyei vermez
+*Ama evi arabayı satıp kredi çekebilirsiniz*
 """)
 
 # --- YAN MENÜ ---
@@ -238,3 +238,4 @@ if st.button("ANALİZ ET", type="primary"):
         else:
             st.error("Veri Yok. Manuel Giriş:")
             # ...
+
