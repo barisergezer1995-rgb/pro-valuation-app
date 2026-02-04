@@ -12,8 +12,8 @@ st.set_page_config(page_title="Amınoğlu Net Sonuç", page_icon="🛡️", layo
 # --- BAŞLIK ---
 st.title("🛡️ Amınoğlu Net Sonuç (v25.0)")
 st.markdown("""
-**Sade ve Güvenli:** Sadece zırhlı hedefi görürsünüz.
-*Arkada dönen matematiksel işlemler (frenleme/sönümleme) gizlenmiştir.*
+**Sade ve Güvenli:** Yatırım Tavsiyesi Vermez
+*Ama Evi Arabayı Satabilirsiniz*
 """)
 
 # --- YAN MENÜ ---
@@ -232,3 +232,4 @@ if st.button("ANALİZ ET", type="primary"):
         else:
             st.error("Veri Yok. Manuel Giriş:")
             # ...
+
