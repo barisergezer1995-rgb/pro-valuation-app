@@ -7,13 +7,13 @@ import plotly.graph_objects as go
 import datetime
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Amınoğlu Çelik Yelek", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Amınoğlu Net Sonuç", page_icon="🛡️", layout="wide")
 
 # --- BAŞLIK ---
-st.title("🛡️ Amınoğlu Çelik Yelek Modu (v24.0)")
+st.title("🛡️ Amınoğlu Net Sonuç (v25.0)")
 st.markdown("""
-**Maksimum Güvenlik:** Potansiyeller iyice törpülendi.
-*Ham potansiyel %100 olsa bile ekranda %38 yazar. Sürprize yer yok.*
+**Sade ve Güvenli:** Sadece zırhlı hedefi görürsünüz.
+*Arkada dönen matematiksel işlemler (frenleme/sönümleme) gizlenmiştir.*
 """)
 
 # --- YAN MENÜ ---
@@ -26,7 +26,7 @@ with st.sidebar:
     default_key = "XcQER6LvWluszHZVly18nqMMxz8Xj1GO"
     api_key = st.text_input("FMP Key", value=default_key, type="password")
     
-    st.info("Mod: **ÇELİK YELEK** (Aşırı Muhafazakar)")
+    st.info("Mod: **NET SONUÇ**")
 
 # --- YARDIMCI ---
 def safe_float(val):
@@ -36,15 +36,12 @@ def safe_float(val):
     except:
         return 0.0
 
-# --- ÇELİK YELEK FRENİ (x0.55 Katsayısı) ---
+# --- FREN FONKSİYONU (GİZLİ KAHRAMAN) ---
 def apply_steel_brake(raw_upside):
     """
-    Katsayıyı 0.55'e çektik.
-    Matematik: ln(1 + 1.0) * 0.55 = 0.693 * 0.55 = 0.38
-    Yani %100 potansiyeli %38'e indirir.
+    Katsayı: 0.55 (Sert Fren)
     """
     abs_val = abs(raw_upside)
-    # Logaritmik sönümleme + %45 ekstra kesinti
     damped = np.log1p(abs_val) * 0.55 
     
     if raw_upside >= 0:
@@ -133,8 +130,8 @@ def get_stock_history(symbol):
         return None
 
 # --- HESAPLAMA MOTORU ---
-def calculate_steel_vest(data):
-    # Parametreler (Makul Ayar)
+def calculate_net_result(data):
+    # Parametreler (Aynı)
     if data['currency'] == 'TRY':
         wacc = 0.19 
         g = 0.14
@@ -171,53 +168,53 @@ def calculate_steel_vest(data):
     raw_price = equity / data['shares']
     if raw_price < 0: raw_price = 0.01
 
-    # --- ÇELİK YELEK FRENİ ---
+    # --- FREN ---
     raw_upside = (raw_price / data['current_price']) - 1
     
-    # Yeni 0.55 Katsayılı Freni Uygula
+    # Frenle
     braked_upside = apply_steel_brake(raw_upside)
     
-    # Yeni Fiyat
-    steel_price = data['current_price'] * (1 + braked_upside)
+    # Hedef Fiyat
+    target_price = data['current_price'] * (1 + braked_upside)
     
-    return steel_price, braked_upside, fcffs, raw_upside
+    return target_price, braked_upside, fcffs
 
 # --- EKRAN ---
-if st.button("HEDEFİ BELİRLE", type="primary"):
-    with st.spinner('Zırhlı hesaplama yapılıyor...'):
+if st.button("ANALİZ ET", type="primary"):
+    with st.spinner('Net sonuç hesaplanıyor...'):
         data, err = get_data_hybrid(ticker, api_key)
         history = get_stock_history(ticker)
         
         if data:
-            steel_price, upside, flows, raw_up = calculate_steel_vest(data)
+            target_price, upside, flows = calculate_net_result(data)
             
             # --- 1. ANA KART ---
-            st.markdown(f"### 🛡️ {data['ticker']} Çelik Yelek Raporu")
+            st.markdown(f"### 🛡️ {data['ticker']} Net Analiz")
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Piyasa Fiyatı", f"{data['current_price']:.2f} {data['currency']}")
             
             # Hedef Fiyat
-            c2.metric("🛡️ Zırhlı Hedef", f"{steel_price:.2f} {data['currency']}")
+            c2.metric("Güvenli Hedef", f"{target_price:.2f} {data['currency']}")
             
-            # Renkli Potansiyel
+            # SADECE NET POTANSİYEL (Ham kısım silindi)
             color = "normal" if upside > 0 else "inverse"
-            c3.metric("Potansiyel (Sıkıştırılmış)", f"%{upside*100:.1f}", f"Ham: %{raw_up*100:.1f}", delta_color=color)
+            c3.metric("Net Potansiyel", f"%{upside*100:.1f}", delta_color=color)
             
             st.markdown("---")
 
-            # --- 2. PROFESYONEL GRAFİK (PLOTLY) ---
+            # --- 2. GRAFİK (PLOTLY) ---
             fig = go.Figure()
             
-            # Geçmiş Fiyat
+            # Geçmiş
             if history is not None:
                 fig.add_trace(go.Scatter(x=history.index, y=history.values, mode='lines', name='Piyasa', line=dict(color='#888', width=2)))
             
             # Hedef Çizgisi
-            fig.add_hline(y=steel_price, line_dash="solid", line_color="#32CD32", line_width=3, annotation_text="GÜVENLİ HEDEF", annotation_font_size=14, annotation_font_color="#32CD32")
+            fig.add_hline(y=target_price, line_dash="solid", line_color="#32CD32", line_width=3, annotation_text="HEDEF", annotation_font_size=14, annotation_font_color="#32CD32")
 
             fig.update_layout(
-                title="Fiyat Performansı ve Güvenli Hedef", 
+                title="Fiyat ve Hedef", 
                 height=500,
                 xaxis_title="Tarih",
                 yaxis_title="Fiyat"
@@ -229,8 +226,8 @@ if st.button("HEDEFİ BELİRLE", type="primary"):
             df_flow = pd.DataFrame(flows, columns=["Projeksiyon"])
             st.area_chart(df_flow, color="#32CD32" if upside > 0 else "#FF4B4B")
             
-            # --- 4. AÇIKLAMA ---
-            st.info(f"ℹ️ **Sistem Notu:** Ham hesaplamada potansiyel **%{raw_up*100:.1f}** idi. Çelik Yelek algoritması bunu **%{upside*100:.1f}** seviyesine indirdi. Bu sonuç yeşilse, hisse gerçekten ucuzdur.")
+            # --- 4. BİLGİ NOTU (Sadeleştirildi) ---
+            st.info(f"ℹ️ **Sistem Notu:** Bu hedef fiyat, {years} yıllık nakit akış projeksiyonları ve 'Yüksek Güvenlik Marjı' kullanılarak hesaplanmıştır.")
 
         else:
             st.error("Veri Yok. Manuel Giriş:")
